@@ -603,6 +603,16 @@ export class Game {
       const rope = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.05, 0.16), goldMat);
       rope.position.set(0, 0.92, -0.32);
       kit.add(rope);
+      const bowTie = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.06, 0.12), deckMat);
+      bowTie.position.set(0, 0.92, -0.72);
+      const sternTie = bowTie.clone();
+      sternTie.position.z = 0.62;
+      kit.add(bowTie, sternTie);
+      if (levelClamped === 2) {
+        const crate = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.22, 0.28), deckMat);
+        crate.position.set(0, 1.02, 0.2);
+        kit.add(crate);
+      }
     } else if (levelClamped <= 5) {
       const hull = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.28, 1.75), woodMat);
       hull.position.set(0, 0.78, -0.02);
@@ -612,6 +622,23 @@ export class Game {
       const stern = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.28, 0.28), deckMat);
       stern.position.set(0, 0.8, 0.95);
       kit.add(hull, bow, stern);
+      const prow = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.5, 8), goldMat);
+      prow.position.set(0, 0.92, -1.5);
+      prow.rotation.x = -Math.PI / 2;
+      kit.add(prow);
+      for (const x of [-0.62, 0.62]) {
+        const outrigger = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 1.35, 7), deckMat);
+        outrigger.rotation.x = Math.PI / 2;
+        outrigger.position.set(x, 0.78, 0.03);
+        kit.add(outrigger);
+        if (levelClamped >= 4) {
+          const strutA = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.045, 0.05), goldMat);
+          strutA.position.set(x * 0.5, 0.92, -0.45);
+          const strutB = strutA.clone();
+          strutB.position.z = 0.45;
+          kit.add(strutA, strutB);
+        }
+      }
       if (levelClamped >= 4) {
         const leftRail = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.18, 1.9), deckMat);
         leftRail.position.set(-0.54, 0.98, -0.05);
@@ -622,7 +649,9 @@ export class Game {
       if (levelClamped >= 5) {
         const cabin = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.34, 0.42), deckMat);
         cabin.position.set(0, 1.08, 0.38);
-        kit.add(cabin);
+        const roof = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.08, 0.5), goldMat);
+        roof.position.set(0, 1.3, 0.38);
+        kit.add(cabin, roof);
       }
     } else if (levelClamped <= 9) {
       const hull = new THREE.Mesh(new THREE.CapsuleGeometry(0.85, 2.25, 5, 16), woodMat);
@@ -641,15 +670,25 @@ export class Game {
       const sailB = sailA.clone();
       sailB.position.z = 0.45;
       kit.add(hull, deck, frontMast, rearMast, sailA, sailB);
+      for (const [x, z] of [[-0.74, -0.65], [0.74, -0.65], [-0.74, 0.18], [0.74, 0.18], [-0.74, 0.82], [0.74, 0.82]] as const) {
+        const port = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.16), cannonMat);
+        port.position.set(x, 1.02, z);
+        kit.add(port);
+      }
       if (levelClamped >= 7) {
         const bowDeck = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.18, 0.5), goldMat);
         bowDeck.position.set(0, 1.2, -1.25);
-        kit.add(bowDeck);
+        const bowsprit = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.045, 0.95, 8), deckMat);
+        bowsprit.rotation.x = Math.PI / 2;
+        bowsprit.position.set(0, 1.26, -1.68);
+        kit.add(bowDeck, bowsprit);
       }
       if (levelClamped >= 8) {
         const cabin = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.52, 0.62), deckMat);
         cabin.position.set(0, 1.42, 0.95);
-        kit.add(cabin);
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.1, 0.1), goldMat);
+        rail.position.set(0, 1.72, 1.24);
+        kit.add(cabin, rail);
       }
       if (levelClamped >= 9) {
         const thirdMast = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.055, 1.5, 8), deckMat);
@@ -672,7 +711,9 @@ export class Game {
       island.position.set(0.52, 1.34, -0.35);
       const runwayLine = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 2.65), goldMat);
       runwayLine.position.set(0, 1.055, -0.1);
-      kit.add(carrier, bow, runway, island, runwayLine);
+      const sternDeck = new THREE.Mesh(new THREE.BoxGeometry(1.35, 0.12, 0.56), steelMat);
+      sternDeck.position.set(0, 1.16, 1.55);
+      kit.add(carrier, bow, runway, island, runwayLine, sternDeck);
       if (levelClamped >= 11) {
         for (const [x, z] of [[-0.35, -0.8], [0.32, 0.45]] as const) {
           const jet = new THREE.Group();
@@ -689,7 +730,12 @@ export class Game {
         const radar = new THREE.Mesh(new THREE.TorusGeometry(0.18, 0.015, 8, 24), goldMat);
         radar.position.set(0.56, 2.08, -0.52);
         radar.rotation.y = Math.PI / 2;
-        kit.add(tower, radar);
+        const deckMarkA = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.055, 0.05), goldMat);
+        deckMarkA.position.set(0, 1.08, -1.25);
+        const deckMarkB = deckMarkA.clone();
+        deckMarkB.rotation.y = Math.PI / 2;
+        deckMarkB.position.z = -0.15;
+        kit.add(tower, radar, deckMarkA, deckMarkB);
       }
     }
 
@@ -881,13 +927,13 @@ export class Game {
     wake.userData.life = 0.5;
     wake.userData.maxLife = 0.5;
     const mat = new THREE.MeshBasicMaterial({ color: '#f4ffff', transparent: true, opacity: 0.62, depthWrite: false, side: THREE.DoubleSide });
-    for (const x of [-0.34, 0.34]) {
-      const ring = new THREE.Mesh(new THREE.RingGeometry(0.18 * size, 0.34 * size, 24), mat.clone());
+    for (const x of [-0.22, 0.22]) {
+      const ring = new THREE.Mesh(new THREE.RingGeometry(0.07 * size, 0.16 * size, 20), mat.clone());
       ring.rotation.x = -Math.PI / 2;
       ring.position.set(x * size, 0, 0);
       wake.add(ring);
     }
-    const behind = new THREE.Vector3(0, 0, 0.82 * size).applyQuaternion(ship.quaternion);
+    const behind = new THREE.Vector3(0, 0, 0.52 * size).applyQuaternion(ship.quaternion);
     wake.position.copy(ship.position).add(behind);
     wake.position.y = 0.12;
     wake.rotation.y = ship.rotation.y;
