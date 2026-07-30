@@ -8,14 +8,14 @@ import { DebugTools, type DebugTuning } from '../systems/DebugTools';
 import { Hud, type HudState } from '../systems/Hud';
 
 const SEA = { halfWidth: 38, halfDepth: 27 };
-const UPGRADE_ISLAND = new THREE.Vector3(-27, 0, -17);
-const UPGRADE_DOCK = new THREE.Vector3(-21.2, 0, -17);
+const UPGRADE_ISLAND = new THREE.Vector3(-23, 0, -14);
+const UPGRADE_DOCK = new THREE.Vector3(-17.2, 0, -14);
 const MAX_START_AMMO = 10;
 const ISLAND_COLLIDERS = [
   { center: UPGRADE_ISLAND, radius: 5.7, dock: UPGRADE_DOCK, dockRadius: 2.35 },
-  { center: new THREE.Vector3(24, 0, 15), radius: 4.2 },
-  { center: new THREE.Vector3(-22, 0, 17), radius: 3.25 },
-  { center: new THREE.Vector3(27, 0, -12), radius: 3.0 },
+  { center: new THREE.Vector3(20, 0, 12), radius: 4.2 },
+  { center: new THREE.Vector3(-18, 0, 13), radius: 3.25 },
+  { center: new THREE.Vector3(21, 0, -10), radius: 3.0 },
 ];
 
 type Ball = { mesh: THREE.Mesh; velocity: THREE.Vector3; life: number; owner: 'player' | 'enemy' | 'ally'; damage: number; source: THREE.Group };
@@ -711,12 +711,16 @@ export class Game {
         kit.add(leftRail, rightRail);
       }
     } else if (levelClamped <= 9) {
-      const hull = new THREE.Mesh(new THREE.CapsuleGeometry(0.85, 2.25, 5, 16), woodMat);
-      hull.scale.set(1.05, 0.42, 1.75);
-      hull.rotation.x = Math.PI / 2;
+      const hull = new THREE.Mesh(new THREE.BoxGeometry(1.12, 0.28, 2.45), woodMat);
       hull.position.y = 0.78;
-      const deck = new THREE.Mesh(new THREE.BoxGeometry(1.28, 0.12, 2.45), deckMat);
-      deck.position.y = 1.08;
+      const bow = new THREE.Mesh(new THREE.ConeGeometry(0.56, 0.72, 4), woodMat);
+      bow.position.set(0, 0.78, -1.58);
+      bow.rotation.x = -Math.PI / 2;
+      bow.scale.x = 1.08;
+      const stern = new THREE.Mesh(new THREE.BoxGeometry(0.94, 0.26, 0.34), deckMat);
+      stern.position.set(0, 0.8, 1.28);
+      const deck = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.08, 2.2), deckMat);
+      deck.position.y = 0.98;
       const frontMast = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.055, 1.7, 8), deckMat);
       frontMast.position.set(0, 1.74, -0.55);
       const rearMast = frontMast.clone();
@@ -726,7 +730,7 @@ export class Game {
       sailA.rotation.y = 0;
       const sailB = sailA.clone();
       sailB.position.z = 0.45;
-      kit.add(hull, deck, frontMast, rearMast, sailA, sailB);
+      kit.add(hull, bow, stern, deck, frontMast, rearMast, sailA, sailB);
       for (const [x, z] of [[-0.74, -0.65], [0.74, -0.65], [-0.74, 0.18], [0.74, 0.18], [-0.74, 0.82], [0.74, 0.82]] as const) {
         const port = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.16), cannonMat);
         port.position.set(x, 1.02, z);
@@ -813,7 +817,7 @@ export class Game {
 
   private createWorldProps(): THREE.Group {
     const props = new THREE.Group(); const sand = new THREE.MeshStandardMaterial({ color: '#ffd36f', roughness: 0.82 }); const palm = new THREE.MeshStandardMaterial({ color: '#31c85d', roughness: 0.68 }); const trunk = new THREE.MeshStandardMaterial({ color: '#a76027', roughness: 0.72 }); const rockMat = new THREE.MeshStandardMaterial({ color: '#d9e1dc', roughness: 0.88 }); const pierMat = new THREE.MeshStandardMaterial({ color: '#9a5b24', roughness: 0.75 });
-    for (const [x, z, s] of [[-27, -17, 1.85], [24, 15, 1.4], [-22, 17, 1.1], [27, -12, 1.0]] as const) {
+    for (const [x, z, s] of [[-23, -14, 1.85], [20, 12, 1.4], [-18, 13, 1.1], [21, -10, 1.0]] as const) {
       const island = new THREE.Group(); const base = new THREE.Mesh(new THREE.CylinderGeometry(2.6 * s, 3.4 * s, 0.45, 18), sand); base.position.y = 0.05; island.add(base);
       const shore = new THREE.Mesh(new THREE.RingGeometry(2.72 * s, 3.55 * s, 30), new THREE.MeshBasicMaterial({ color: '#f6ffff', transparent: true, opacity: 0.28, side: THREE.DoubleSide }));
       shore.rotation.x = -Math.PI / 2;
