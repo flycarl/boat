@@ -19,6 +19,7 @@ export type HudState = {
   reloadTimer: number;
   nearUpgrade: boolean;
   canUpgrade: boolean;
+  nearSailor: boolean;
   allies: number;
 };
 
@@ -52,11 +53,13 @@ export class Hud {
       : state.paused
         ? '已暂停：ESC 继续，可更改旗帜'
         : state.nearUpgrade
-          ? '已到升级岛：按 1/2/3 购买升级'
+          ? '已到港口：按空格进入升级页面'
+          : state.nearSailor
+            ? '岛上水手：500 金币雇佣，他会跟船帮忙开炮'
           : state.canUpgrade
             ? '金币够了：跟着绿色航线进金色港口'
             : '鼠标转向，左键开炮，右键换弹';
-    this.upgradeLine.textContent = `升级岛购买：1 火炮 Lv.${state.cannonLevel} $${state.cannonCost} · 2 船体 Lv.${state.hullLevel} $${state.hullCost} · 3 航速 Lv.${state.speedLevel} $${state.speedCost}`;
+    this.upgradeLine.textContent = `靠近港口按空格：1 火炮 Lv.${state.cannonLevel} $${state.cannonCost} · 2 船体 Lv.${state.hullLevel} $${state.hullCost} · 3 航速 Lv.${state.speedLevel} $${state.speedCost}`;
     this.overlay.classList.toggle('visible', state.gameOver || state.paused);
     this.overlay.classList.toggle('gameover', state.gameOver);
     if (state.gameOver) this.overlay.querySelector('h1')!.textContent = '你被击沉了';

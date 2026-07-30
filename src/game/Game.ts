@@ -77,6 +77,7 @@ export class Game {
   private dockCooldown = 0;
   private wakeTimer = 0;
   private playerCollideCooldown = 0;
+  private sailorRespawnTimer = 0;
   private readonly floatingTexts: FloatingText[] = [];
 
   private playerShipRadius(): number {
@@ -132,6 +133,12 @@ export class Game {
       }
     }
     if (event.code === 'Backspace') this.restart();
+    if (event.code === 'Space') {
+      event.preventDefault();
+      if (!this.paused && !this.gameOver && !this.upgradeOpen && this.isNearUpgradeDock()) {
+        this.upgradeOpen = true;
+      }
+    }
     if (event.code === 'Digit1') this.tryUpgrade('cannon');
     if (event.code === 'Digit2') this.tryUpgrade('hull');
     if (event.code === 'Digit3') this.tryUpgrade('speed');
@@ -160,7 +167,7 @@ export class Game {
       this.updateShipCollisions(delta);
       this.updateBalls(delta);
       this.updateLoot(delta, elapsedRaw);
-      this.updateCastaways();
+      this.updateCastaways(delta);
       this.updateVfx(delta);
       this.spawnTimer -= delta;
       if (this.spawnTimer <= 0 && this.enemies.length < 8 + Math.min(this.wave, 6)) { this.spawnEnemy(); this.spawnTimer = Math.max(1.4, 4.2 - this.wave * 0.24); }
@@ -185,7 +192,7 @@ export class Game {
     this.cannonLevel = 1; this.hullLevel = 1; this.speedLevel = 1;
     this.coins = 0; this.kills = 0; this.wave = 1; this.hp = this.maxHp();
     this.maxAmmo = MAX_START_AMMO; this.ammo = this.maxAmmo; this.reloading = false; this.reloadTimer = 0;
-    this.cooldown = 0; this.dockCooldown = 0; this.elapsed = 0; this.paused = false; this.upgradeOpen = false; this.gameOver = false; this.spawnTimer = 0.2;
+    this.cooldown = 0; this.dockCooldown = 0; this.sailorRespawnTimer = 0; this.elapsed = 0; this.paused = false; this.upgradeOpen = false; this.gameOver = false; this.spawnTimer = 0.2;
     this.paintFlag(this.player, this.flagColor);
     this.resizeFleet();
     this.getElement('#flag-menu').querySelectorAll<HTMLButtonElement>('button').forEach((button) => button.classList.toggle('selected', button.dataset.flag === this.flagColor));
@@ -226,10 +233,6 @@ export class Game {
     this.player.position.addScaledVector(this.playerVelocity, delta);
     this.clampToSea(this.player.position, 1.8);
     this.resolveIslandCollision(this.player.position, this.player.scale.x * 1.0);
-    if (this.dockCooldown <= 0 && this.player.position.distanceTo(UPGRADE_DOCK) < 1.25 + this.playerShipRadius() && this.playerVelocity.length() < speed + 0.5) {
-      this.upgradeOpen = true;
-      this.paused = false;
-    }
     this.player.position.y = Math.sin(elapsedRaw * 3.4) * 0.12;
     this.wakeTimer -= delta;
     if (this.playerVelocity.lengthSq() > 2.2 && this.wakeTimer <= 0) {
@@ -450,12 +453,19 @@ export class Game {
     if (this.loot.filter((item) => item.active && item.kind === 'med').length < 3) this.spawnLoot('med');
   }
 
-  private updateCastaways(): void {
+  private updateCastaways(delta: number): void {
+    this.sailorRespawnTimer = Math.max(0, this.sailorRespawnTimer - delta);
+    if (this.castaways.every((castaway) => castaway.rescued) && this.sailorRespawnTimer <= 0) this.createCastaways();
     for (const castaway of this.castaways) {
       if (castaway.rescued) continue;
       castaway.group.lookAt(this.player.position.x, castaway.group.position.y, this.player.position.z);
-      if (this.coins >= castaway.cost && castaway.group.position.distanceTo(this.player.position) < 3.2) {
-        this.coins -= castaway.cost; castaway.rescued = true; castaway.group.visible = false; this.addAlly(); this.audio.upgrade();
+      if (this.coins >= castaway.cost && castaway.group.position.distanceTo(this.player.position) < 3.4) {
+        this.coins -= castaway.cost;
+        castaway.rescued = true;
+        castaway.group.visible = false;
+        this.sailorRespawnTimer = 300;
+        this.addAlly();
+        this.audio.upgrade();
       }
     }
   }
@@ -499,6 +509,7 @@ export class Game {
   }
 
   private tryUpgrade(kind: 'cannon' | 'hull' | 'speed'): void {
+    if (!this.upgradeOpen) return;
     if (this.player.position.distanceTo(UPGRADE_DOCK) > 1.55 + this.playerShipRadius()) return;
     const costs = { cannon: this.cannonLevel * 28, hull: this.hullLevel * 30, speed: this.speedLevel * 24 };
     if (kind === 'hull' && this.hullLevel >= 12) return;
@@ -512,6 +523,10 @@ export class Game {
 
   private maxHp(): number { return 85 + (this.hullLevel - 1) * 40; }
   private minUpgradeCost(): number { return Math.min(this.cannonLevel * 28, this.hullLevel * 30, this.speedLevel * 24); }
+
+  private isNearUpgradeDock(): boolean {
+    return this.dockCooldown <= 0 && this.player.position.distanceTo(UPGRADE_DOCK) < 1.35 + this.playerShipRadius();
+  }
 
   private resizeFleet(): void {
     this.player.scale.setScalar(this.shipScaleForLevel(this.hullLevel));
@@ -586,14 +601,23 @@ export class Game {
   }
 
   private createCastaways(): void {
-    const points = [[24, 15], [-22, 17], [27, -12]] as const;
-    points.forEach(([x, z], i) => {
+    const active = this.castaways.find((castaway) => !castaway.rescued);
+    if (active) return;
+    for (const castaway of this.castaways) this.scene.remove(castaway.group);
+    this.castaways.length = 0;
+    const points = [[20, 12], [-18, 13], [21, -10]] as const;
+    const [x, z] = points[Math.floor(Math.random() * points.length)];
       const group = new THREE.Group();
       const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.18, 0.35, 4, 8), new THREE.MeshStandardMaterial({ color: '#f2c08c', roughness: 0.7 }));
-      const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.35), new THREE.MeshBasicMaterial({ color: '#fff4d6', side: THREE.DoubleSide }));
-      flag.position.set(0.35, 0.95, 0); group.add(body, flag); group.position.set(x, 0.55, z);
-      this.scene.add(group); this.castaways.push({ group, rescued: false, cost: 32 + i * 14 });
-    });
+    const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.35), new THREE.MeshBasicMaterial({ color: this.flagColor, side: THREE.DoubleSide }));
+    const price = new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.035, 8, 24), new THREE.MeshBasicMaterial({ color: '#f8d66d' }));
+    flag.position.set(0.35, 0.95, 0);
+    price.position.set(0, 0.08, 0);
+    price.rotation.x = Math.PI / 2;
+    group.add(body, flag, price);
+    group.position.set(x, 0.55, z);
+    this.scene.add(group);
+    this.castaways.push({ group, rescued: false, cost: 500 });
   }
 
   private createShip(hullColor: string, sailColor: string, flagColor: string, mode: 'raft' | 'ship'): THREE.Group {
@@ -1097,7 +1121,8 @@ export class Game {
   }
 
   private getHudState(): HudState {
-    return { hp: this.hp, maxHp: this.maxHp(), coins: this.coins, kills: this.kills, wave: this.wave, cannonLevel: this.cannonLevel, hullLevel: this.hullLevel, speedLevel: this.speedLevel, elapsed: this.elapsed, gameOver: this.gameOver, paused: this.paused, cannonCost: this.cannonLevel * 28, hullCost: this.hullLevel * 30, speedCost: this.speedLevel * 24, ammo: this.ammo, maxAmmo: this.maxAmmo, reloading: this.reloading, reloadTimer: this.reloadTimer, nearUpgrade: this.player.position.distanceTo(UPGRADE_ISLAND) < 5.2, canUpgrade: this.coins >= this.minUpgradeCost(), allies: this.allies.length };
+    const nearSailor = this.castaways.some((castaway) => !castaway.rescued && castaway.group.position.distanceTo(this.player.position) < 4.2);
+    return { hp: this.hp, maxHp: this.maxHp(), coins: this.coins, kills: this.kills, wave: this.wave, cannonLevel: this.cannonLevel, hullLevel: this.hullLevel, speedLevel: this.speedLevel, elapsed: this.elapsed, gameOver: this.gameOver, paused: this.paused, cannonCost: this.cannonLevel * 28, hullCost: this.hullLevel * 30, speedCost: this.speedLevel * 24, ammo: this.ammo, maxAmmo: this.maxAmmo, reloading: this.reloading, reloadTimer: this.reloadTimer, nearUpgrade: this.isNearUpgradeDock(), canUpgrade: this.coins >= this.minUpgradeCost(), allies: this.allies.length, nearSailor };
   }
 
   private publishDiagnostics(): void {
