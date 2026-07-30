@@ -54,6 +54,29 @@ body {
   text-transform: uppercase;
 }
 
+#level-banner {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 22px 9px;
+  border: 2px solid rgba(255, 244, 214, 0.65);
+  border-radius: 999px;
+  color: #fff9cf;
+  background: linear-gradient(180deg, rgba(22, 113, 151, 0.9), rgba(5, 83, 122, 0.82));
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.22),
+    inset 0 0 18px rgba(255, 255, 255, 0.18);
+  font-size: 1.05rem;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.28);
+}
+
+#level-value {
+  color: #ffe86e;
+}
+
 .hud-panel,
 .hud-metric,
 #upgrade-line {

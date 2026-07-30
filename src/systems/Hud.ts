@@ -29,6 +29,7 @@ export class Hud {
   private readonly ammoValue = this.getElement('#ammo-value');
   private readonly killValue = this.getElement('#kill-value');
   private readonly waveValue = this.getElement('#wave-value');
+  private readonly levelValue = this.getElement('#level-value');
   private readonly timerValue = this.getElement('#timer-value');
   private readonly statusLine = this.getElement('#status-line');
   private readonly upgradeLine = this.getElement('#upgrade-line');
@@ -42,6 +43,7 @@ export class Hud {
     this.ammoValue.textContent = state.reloading ? `装弹 ${state.reloadTimer.toFixed(1)}` : `${state.ammo}/${state.maxAmmo}`;
     this.killValue.textContent = `${state.kills}+${state.allies}`;
     this.waveValue.textContent = String(state.wave);
+    this.levelValue.textContent = String(state.hullLevel);
     const minutes = Math.floor(state.elapsed / 60).toString().padStart(2, '0');
     const seconds = Math.floor(state.elapsed % 60).toString().padStart(2, '0');
     this.timerValue.textContent = `${minutes}:${seconds}`;

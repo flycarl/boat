@@ -73,6 +73,7 @@ export class Game {
   private gameOver = false;
   private upgradeOpen = false;
   private dockCooldown = 0;
+  private wakeTimer = 0;
 
   private playerShipRadius(): number {
     return 1.0 + Math.min(12, this.hullLevel) * 0.16;
@@ -221,6 +222,11 @@ export class Game {
       this.paused = false;
     }
     this.player.position.y = Math.sin(elapsedRaw * 3.4) * 0.12;
+    this.wakeTimer -= delta;
+    if (this.playerVelocity.lengthSq() > 2.2 && this.wakeTimer <= 0) {
+      this.createWake(this.player, this.playerShipRadius());
+      this.wakeTimer = 0.12;
+    }
     this.player.rotation.z = THREE.MathUtils.lerp(this.player.rotation.z, 0, 1 - Math.exp(-8 * delta));
     this.cooldown -= delta;
     if (this.reloading) { this.reloadTimer -= delta; if (this.reloadTimer <= 0) { this.reloading = false; this.ammo = this.maxAmmo; this.audio.upgrade(); } }
@@ -266,6 +272,7 @@ export class Game {
       this.resolveIslandCollision(enemy.group.position, 1.1 * enemy.group.scale.x);
       if (enemy.velocity.lengthSq() > 0.01) enemy.group.rotation.y = Math.atan2(-enemy.velocity.x, -enemy.velocity.z);
       enemy.group.position.y = Math.sin(elapsedRaw * 3 + enemy.seed) * 0.12;
+      if (enemy.velocity.lengthSq() > 4 && Math.sin(elapsedRaw * 8 + enemy.seed) > 0.82) this.createWake(enemy.group, 0.9 + enemy.rank * 0.08);
       enemy.cooldown -= delta;
       const attackRange = target === this.player ? 22 : 17;
       if (!shouldFlee && distance < attackRange && enemy.cooldown <= 0) { this.fireAt(enemy.group, target.position, 'enemy', 10 + enemy.rank * 3, 11.5, '#251414'); enemy.cooldown = 2.2 + Math.random() * 0.7; }
@@ -709,14 +716,24 @@ export class Game {
   }
 
   private createWorldProps(): THREE.Group {
-    const props = new THREE.Group(); const sand = new THREE.MeshStandardMaterial({ color: '#ffd36f', roughness: 0.82 }); const palm = new THREE.MeshStandardMaterial({ color: '#31c85d', roughness: 0.68 }); const trunk = new THREE.MeshStandardMaterial({ color: '#a76027', roughness: 0.72 });
+    const props = new THREE.Group(); const sand = new THREE.MeshStandardMaterial({ color: '#ffd36f', roughness: 0.82 }); const palm = new THREE.MeshStandardMaterial({ color: '#31c85d', roughness: 0.68 }); const trunk = new THREE.MeshStandardMaterial({ color: '#a76027', roughness: 0.72 }); const rockMat = new THREE.MeshStandardMaterial({ color: '#d9e1dc', roughness: 0.88 }); const pierMat = new THREE.MeshStandardMaterial({ color: '#9a5b24', roughness: 0.75 });
     for (const [x, z, s] of [[-27, -17, 1.85], [24, 15, 1.4], [-22, 17, 1.1], [27, -12, 1.0]] as const) {
       const island = new THREE.Group(); const base = new THREE.Mesh(new THREE.CylinderGeometry(2.6 * s, 3.4 * s, 0.45, 18), sand); base.position.y = 0.05; island.add(base);
+      const shore = new THREE.Mesh(new THREE.RingGeometry(2.72 * s, 3.55 * s, 30), new THREE.MeshBasicMaterial({ color: '#f6ffff', transparent: true, opacity: 0.28, side: THREE.DoubleSide }));
+      shore.rotation.x = -Math.PI / 2;
+      shore.position.y = 0.07;
+      island.add(shore);
+      for (let r = 0; r < 4; r += 1) {
+        const angle = r * Math.PI * 0.5 + (x + z) * 0.03;
+        const rock = new THREE.Mesh(new THREE.DodecahedronGeometry((0.22 + r * 0.035) * s, 0), rockMat);
+        rock.position.set(Math.cos(angle) * 2.35 * s, 0.38, Math.sin(angle) * 2.05 * s);
+        rock.rotation.set(r * 0.6, angle, r * 0.35);
+        island.add(rock);
+      }
       for (let i = 0; i < 3; i += 1) { const t = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.13, 1.2, 7), trunk); t.position.set((i - 1) * 0.6 * s, 0.8, Math.sin(i) * 0.55 * s); const leaves = new THREE.Mesh(new THREE.ConeGeometry(0.55, 0.9, 7), palm); leaves.position.copy(t.position).add(new THREE.Vector3(0, 0.85, 0)); island.add(t, leaves); }
       if (x === UPGRADE_ISLAND.x) {
         const shop = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.7, 0.8, 6), new THREE.MeshStandardMaterial({ color: '#f8d66d', roughness: 0.45, emissive: '#7b5b05', emissiveIntensity: 0.2 }));
         shop.position.y = 0.7; island.add(shop);
-        const pierMat = new THREE.MeshStandardMaterial({ color: '#9a5b24', roughness: 0.75 });
         for (const dz of [-1.3, 1.3]) {
           const pier = new THREE.Mesh(new THREE.BoxGeometry(4.7, 0.16, 0.28), pierMat);
           pier.position.set(4.15, 0.35, dz);
@@ -729,6 +746,11 @@ export class Game {
         notchWater.rotation.x = -Math.PI / 2;
         notchWater.position.set(5.85, 0.08, 0);
         island.add(notchWater);
+      } else {
+        const pier = new THREE.Mesh(new THREE.BoxGeometry(1.5 * s, 0.14, 0.28 * s), pierMat);
+        pier.position.set(-2.45 * s, 0.32, 0.3 * s);
+        pier.rotation.y = 0.25;
+        island.add(pier);
       }
       island.position.set(x, 0, z); props.add(island);
     }
@@ -852,6 +874,25 @@ export class Game {
 
   private updateVfx(delta: number): void {
     for (let i = this.vfx.length - 1; i >= 0; i -= 1) { const group = this.vfx[i]; group.userData.life -= delta; group.scale.multiplyScalar(1 + delta * 2.4); for (const child of group.children) if (child instanceof THREE.Mesh && child.material instanceof THREE.Material) child.material.opacity = Math.max(0, group.userData.life / group.userData.maxLife); if (group.userData.life <= 0) { this.scene.remove(group); this.vfx.splice(i, 1); } }
+  }
+
+  private createWake(ship: THREE.Group, size: number): void {
+    const wake = new THREE.Group();
+    wake.userData.life = 0.5;
+    wake.userData.maxLife = 0.5;
+    const mat = new THREE.MeshBasicMaterial({ color: '#f4ffff', transparent: true, opacity: 0.62, depthWrite: false, side: THREE.DoubleSide });
+    for (const x of [-0.34, 0.34]) {
+      const ring = new THREE.Mesh(new THREE.RingGeometry(0.18 * size, 0.34 * size, 24), mat.clone());
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.set(x * size, 0, 0);
+      wake.add(ring);
+    }
+    const behind = new THREE.Vector3(0, 0, 0.82 * size).applyQuaternion(ship.quaternion);
+    wake.position.copy(ship.position).add(behind);
+    wake.position.y = 0.12;
+    wake.rotation.y = ship.rotation.y;
+    this.scene.add(wake);
+    this.vfx.push(wake);
   }
 
   private createWaterTexture(): THREE.CanvasTexture {
