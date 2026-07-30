@@ -810,8 +810,8 @@ export class Game {
   }
 
   private createOcean(): THREE.Mesh {
-    const texture = this.createWaterTexture(); texture.wrapS = THREE.RepeatWrapping; texture.wrapT = THREE.RepeatWrapping; texture.repeat.set(11, 8);
-    const ocean = new THREE.Mesh(new THREE.PlaneGeometry(SEA.halfWidth * 2.5, SEA.halfDepth * 2.5, 64, 64), new THREE.MeshStandardMaterial({ color: '#12b8d7', map: texture, roughness: 0.39, metalness: 0.02 }));
+    const texture = this.createWaterTexture(); texture.wrapS = THREE.RepeatWrapping; texture.wrapT = THREE.RepeatWrapping; texture.repeat.set(4, 3);
+    const ocean = new THREE.Mesh(new THREE.PlaneGeometry(SEA.halfWidth * 2.5, SEA.halfDepth * 2.5, 64, 64), new THREE.MeshStandardMaterial({ color: '#22c7dc', map: texture, roughness: 0.46, metalness: 0.01 }));
     ocean.rotation.x = -Math.PI / 2; ocean.receiveShadow = true; return ocean;
   }
 
@@ -819,10 +819,21 @@ export class Game {
     const props = new THREE.Group(); const sand = new THREE.MeshStandardMaterial({ color: '#ffd36f', roughness: 0.82 }); const palm = new THREE.MeshStandardMaterial({ color: '#31c85d', roughness: 0.68 }); const trunk = new THREE.MeshStandardMaterial({ color: '#a76027', roughness: 0.72 }); const rockMat = new THREE.MeshStandardMaterial({ color: '#d9e1dc', roughness: 0.88 }); const pierMat = new THREE.MeshStandardMaterial({ color: '#9a5b24', roughness: 0.75 });
     for (const [x, z, s] of [[-23, -14, 1.85], [20, 12, 1.4], [-18, 13, 1.1], [21, -10, 1.0]] as const) {
       const island = new THREE.Group(); const base = new THREE.Mesh(new THREE.CylinderGeometry(2.6 * s, 3.4 * s, 0.45, 18), sand); base.position.y = 0.05; island.add(base);
-      const shore = new THREE.Mesh(new THREE.RingGeometry(2.72 * s, 3.55 * s, 30), new THREE.MeshBasicMaterial({ color: '#f6ffff', transparent: true, opacity: 0.28, side: THREE.DoubleSide }));
+      const shore = new THREE.Mesh(new THREE.RingGeometry(2.72 * s, 3.55 * s, 36), new THREE.MeshBasicMaterial({ color: '#f6ffff', transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false }));
       shore.rotation.x = -Math.PI / 2;
       shore.position.y = 0.07;
       island.add(shore);
+      for (let w = 0; w < 3; w += 1) {
+        const wave = new THREE.Mesh(
+          new THREE.RingGeometry((3.05 + w * 0.3) * s, (3.1 + w * 0.3) * s, 40),
+          new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.2 - w * 0.045, side: THREE.DoubleSide, depthWrite: false }),
+        );
+        wave.rotation.x = -Math.PI / 2;
+        wave.rotation.z = (x * 0.07 + z * 0.03 + w) % Math.PI;
+        wave.scale.setScalar(1 + w * 0.035);
+        wave.position.y = 0.095 + w * 0.012;
+        island.add(wave);
+      }
       for (let r = 0; r < 4; r += 1) {
         const angle = r * Math.PI * 0.5 + (x + z) * 0.03;
         const rock = new THREE.Mesh(new THREE.DodecahedronGeometry((0.22 + r * 0.035) * s, 0), rockMat);
@@ -1030,8 +1041,35 @@ export class Game {
 
   private createWaterTexture(): THREE.CanvasTexture {
     const c = document.createElement('canvas'); c.width = 512; c.height = 512; const ctx = c.getContext('2d'); if (!ctx) throw new Error('Missing canvas context');
-    const gradient = ctx.createLinearGradient(0, 0, 512, 512); gradient.addColorStop(0, '#0698ce'); gradient.addColorStop(0.55, '#11c6df'); gradient.addColorStop(1, '#32e0d1'); ctx.fillStyle = gradient; ctx.fillRect(0, 0, 512, 512);
-    ctx.strokeStyle = 'rgba(245,255,255,.26)'; ctx.lineWidth = 3; for (let y = -80; y < 620; y += 38) { ctx.beginPath(); for (let x = -20; x < 560; x += 20) ctx.lineTo(x, y + Math.sin(x * 0.04 + y) * 8); ctx.stroke(); }
+    const image = ctx.createImageData(c.width, c.height);
+    const data = image.data;
+    for (let y = 0; y < c.height; y += 1) {
+      for (let x = 0; x < c.width; x += 1) {
+        const i = (y * c.width + x) * 4;
+        const large = Math.sin(x * 0.018 + y * 0.012) * 0.5 + Math.cos(x * 0.011 - y * 0.02) * 0.5;
+        const small = Math.sin((x + y) * 0.075) * 0.18 + Math.cos((x - y) * 0.061) * 0.14;
+        const value = THREE.MathUtils.clamp(0.5 + large * 0.22 + small, 0, 1);
+        data[i] = 4 + value * 34;
+        data[i + 1] = 148 + value * 78;
+        data[i + 2] = 184 + value * 58;
+        data[i + 3] = 255;
+      }
+    }
+    ctx.putImageData(image, 0, 0);
+    const glow = ctx.createRadialGradient(160, 130, 12, 160, 130, 360);
+    glow.addColorStop(0, 'rgba(127,255,233,.32)');
+    glow.addColorStop(0.55, 'rgba(46,220,220,.12)');
+    glow.addColorStop(1, 'rgba(0,75,120,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.strokeStyle = 'rgba(245,255,255,.13)';
+    ctx.lineWidth = 1.2;
+    for (let i = 0; i < 26; i += 1) {
+      const y = (i * 73) % 512;
+      ctx.beginPath();
+      for (let x = -20; x < 540; x += 32) ctx.lineTo(x, y + Math.sin(x * 0.024 + i * 1.7) * 5);
+      ctx.stroke();
+    }
     const texture = new THREE.CanvasTexture(c); texture.colorSpace = THREE.SRGBColorSpace; return texture;
   }
 
