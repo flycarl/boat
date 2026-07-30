@@ -6,21 +6,24 @@ export class CameraRig {
 
   constructor(
     private readonly camera: THREE.PerspectiveCamera,
-    private readonly offset = new THREE.Vector3(0, 15.5, 6.2),
-  ) {}
+    private readonly offset = new THREE.Vector3(0, 22, 4.8),
+  ) {
+    this.camera.fov = 44;
+    this.camera.updateProjectionMatrix();
+  }
 
   snapTo(target: THREE.Vector3): void {
     this.desiredPosition.copy(target).add(this.offset);
     this.camera.position.copy(this.desiredPosition);
-    this.lookTarget.copy(target).add(new THREE.Vector3(0, 0.4, 0));
+    this.lookTarget.copy(target).add(new THREE.Vector3(0, 0.18, -0.2));
     this.camera.lookAt(this.lookTarget);
   }
 
   update(delta: number, target: THREE.Vector3, lag: number): void {
     this.desiredPosition.copy(target).add(this.offset);
-    const factor = 1 - Math.exp(-delta / Math.max(0.001, lag));
+    const factor = 1 - Math.exp(-delta / Math.max(0.001, lag * 0.72));
     this.camera.position.lerp(this.desiredPosition, factor);
-    this.lookTarget.copy(target).add(new THREE.Vector3(0, 0.2, -0.35));
+    this.lookTarget.copy(target).add(new THREE.Vector3(0, 0.12, -0.2));
     this.camera.lookAt(this.lookTarget);
   }
 }
