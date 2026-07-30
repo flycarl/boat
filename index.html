@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#111312" />
+    <title>Blackwake.io - Pirate Ship Battle</title>
+  </head>
+  <body>
+    <main id="app">
+      <canvas id="game-canvas" aria-label="Playable Three.js game canvas"></canvas>
+      <section id="hud" aria-live="polite">
+        <div class="hud-panel captain">
+          <span class="eyebrow">BLACKWAKE.IO</span>
+          <strong>海盗船乱斗</strong>
+          <small id="status-line">侧舷开火，抢金币，升级你的船</small>
+        </div>
+        <div class="hud-panel health">
+          <span>船体</span>
+          <div class="meter"><i id="hp-fill"></i></div>
+          <strong id="hp-value">100/100</strong>
+        </div>
+        <div class="hud-metric"><span>金币</span><strong id="coin-value">0</strong></div>
+        <div class="hud-metric"><span>炮弹</span><strong id="ammo-value">10/10</strong></div>
+        <div class="hud-metric"><span>击沉</span><strong id="kill-value">0</strong></div>
+        <div class="hud-metric"><span>波次</span><strong id="wave-value">1</strong></div>
+        <div class="hud-metric"><span>时间</span><strong id="timer-value">00:00</strong></div>
+        <div id="upgrade-line">1 火炮 · 2 船体 · 3 航速</div>
+      </section>
+      <div id="minimap">
+        <span id="map-player"></span>
+        <span id="map-upgrade"></span>
+        <span id="map-line"></span>
+        <span id="map-enemies"></span>
+      </div>
+      <div id="nameplates"></div>
+      <div id="crosshair">✣</div>
+      <div id="overlay">
+        <div id="pause-card">
+          <h1>暂停</h1>
+          <p>ESC 继续 · Backspace 重新开始 · 右键换弹</p>
+          <button id="resume-button" type="button">继续游戏</button>
+          <button id="restart-button" type="button">重新开始</button>
+          <h2>更换旗帜</h2>
+          <div id="flag-menu">
+            <button type="button" data-flag="#e54b39">红骷髅</button>
+            <button type="button" data-flag="#1f63ff">蓝海盗</button>
+            <button type="button" data-flag="#111111">黑旗</button>
+            <button type="button" data-flag="#f8d66d">金旗</button>
+          </div>
+        </div>
+      </div>
+      <div id="upgrade-overlay">
+        <div id="upgrade-card">
+          <h1>升级港口</h1>
+          <p>停进岛屿凹槽后可以升级。金币不足的项目会变暗。</p>
+          <div class="upgrade-actions">
+            <button id="upgrade-cannon" type="button">升级火炮</button>
+            <button id="upgrade-hull" type="button">升级船体</button>
+            <button id="upgrade-speed" type="button">升级航速</button>
+          </div>
+          <button id="close-upgrade" type="button">离开港口</button>
+        </div>
+      </div>
+      <div id="touch-controls" aria-hidden="true">
+        <div id="touch-stick">
+          <div id="touch-knob"></div>
+        </div>
+        <button id="dash-button" type="button">Fire</button>
+      </div>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
