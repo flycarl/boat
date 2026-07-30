@@ -710,13 +710,6 @@ export class Game {
         rightRail.position.x = 0.54;
         kit.add(leftRail, rightRail);
       }
-      if (levelClamped >= 5) {
-        const cabin = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.34, 0.42), deckMat);
-        cabin.position.set(0, 1.08, 0.38);
-        const roof = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.08, 0.5), goldMat);
-        roof.position.set(0, 1.3, 0.38);
-        kit.add(cabin, roof);
-      }
     } else if (levelClamped <= 9) {
       const hull = new THREE.Mesh(new THREE.CapsuleGeometry(0.85, 2.25, 5, 16), woodMat);
       hull.scale.set(1.05, 0.42, 1.75);
