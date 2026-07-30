@@ -653,8 +653,8 @@ export class Game {
     const levelClamped = Math.max(1, Math.min(12, Math.floor(level)));
     const baseMast = ship.getObjectByName('base-mast');
     const baseSail = ship.getObjectByName('base-sail');
-    if (baseMast) baseMast.visible = levelClamped >= 6 && levelClamped <= 9;
-    if (baseSail) baseSail.visible = levelClamped >= 6 && levelClamped <= 9;
+    if (baseMast) baseMast.visible = false;
+    if (baseSail) baseSail.visible = false;
 
     if (levelClamped <= 2) {
       const logs = levelClamped === 1 ? [-0.18, 0.18] : [-0.42, -0.14, 0.14, 0.42];
@@ -730,7 +730,7 @@ export class Game {
       rearMast.position.z = 0.45;
       const sailA = new THREE.Mesh(new THREE.PlaneGeometry(0.95, 0.65), new THREE.MeshStandardMaterial({ color: '#fff2d0', roughness: 0.8, side: THREE.DoubleSide }));
       sailA.position.set(0, 1.72, -0.55);
-      sailA.rotation.y = Math.PI / 2;
+      sailA.rotation.y = 0;
       const sailB = sailA.clone();
       sailB.position.z = 0.45;
       kit.add(hull, deck, frontMast, rearMast, sailA, sailB);
@@ -747,19 +747,12 @@ export class Game {
         bowsprit.position.set(0, 1.26, -1.68);
         kit.add(bowDeck, bowsprit);
       }
-      if (levelClamped >= 8) {
-        const cabin = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.52, 0.62), deckMat);
-        cabin.position.set(0, 1.42, 0.95);
-        const rail = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.1, 0.1), goldMat);
-        rail.position.set(0, 1.72, 1.24);
-        kit.add(cabin, rail);
-      }
       if (levelClamped >= 9) {
         const thirdMast = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.055, 1.5, 8), deckMat);
         thirdMast.position.set(0, 1.68, 1.05);
         const sailC = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.55), new THREE.MeshStandardMaterial({ color: '#ffe7a8', roughness: 0.8, side: THREE.DoubleSide }));
         sailC.position.set(0, 1.68, 1.05);
-        sailC.rotation.y = Math.PI / 2;
+        sailC.rotation.y = 0;
         kit.add(thirdMast, sailC);
       }
     } else {
