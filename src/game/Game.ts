@@ -559,7 +559,7 @@ export class Game {
 
   private sinkEnemy(enemy: ShipAi, rewardPlayer = true): void {
     this.enemies.splice(this.enemies.indexOf(enemy), 1); this.scene.remove(enemy.group);
-    if (rewardPlayer) { this.kills += 1; this.coins += 18 + enemy.rank * 9; }
+    if (rewardPlayer) { this.kills += 1; this.coins += 18 + enemy.rank * 9 + Math.floor(enemy.coins); }
     for (let i = 0; i < 2; i += 1) this.spawnLoot('gold', enemy.group.position);
     if (Math.random() < 0.35) this.spawnLoot('med', enemy.group.position);
     this.makeSplash(enemy.group.position, '#f8d66d', 1.1); this.audio.sink();
@@ -644,7 +644,7 @@ export class Game {
     group.add(dockRing);
     group.position.copy(point.camp).setY(0.55);
     this.scene.add(group);
-    this.castaways.push({ group, dock: point.dock, rescued: false, cost: 500 });
+    this.castaways.push({ group, dock: point.dock, rescued: false, cost: 200 });
   }
 
   private createShip(hullColor: string, sailColor: string, flagColor: string, mode: 'raft' | 'ship'): THREE.Group {

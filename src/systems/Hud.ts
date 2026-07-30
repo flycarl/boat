@@ -55,7 +55,7 @@ export class Hud {
         : state.nearUpgrade
           ? '已到港口：可以直接升级'
           : state.nearSailor
-            ? '水手营地：进凹槽后可花 500 金币雇佣'
+            ? '水手营地：进凹槽后可花 200 金币雇佣'
           : state.canUpgrade
             ? '金币够了：跟着绿色航线进金色港口'
             : '鼠标转向，左键开炮，右键换弹';
@@ -66,6 +66,8 @@ export class Hud {
     else this.overlay.querySelector('h1')!.textContent = '暂停';
     const p = this.overlay.querySelector('p');
     if (p) p.textContent = state.gameOver ? 'Backspace 重新开始 · ESC 返回菜单' : 'ESC 继续 · Backspace 重新开始 · 右键换弹';
+    const resume = this.overlay.querySelector<HTMLElement>('#resume-button');
+    if (resume) resume.style.display = state.gameOver ? 'none' : 'inline-block';
   }
 
   flashPickup(): void {
