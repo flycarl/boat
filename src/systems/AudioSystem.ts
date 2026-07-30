@@ -27,8 +27,10 @@ export class AudioSystem {
 
   pickup(index: number): void {
     if (!this.context || this.context.state !== 'running') return;
-    this.tone('triangle', 520 + index * 6, 920 + index * 8, 0.055, 0.14, 0.005);
-    this.tone('sine', 1040 + index * 4, 1480 + index * 4, 0.025, 0.11, 0.045);
+    this.tone('triangle', 620 + index * 4, 980 + index * 4, 0.052, 0.1, 0);
+    this.tone('sine', 980 + index * 3, 1460 + index * 3, 0.045, 0.13, 0.055);
+    this.tone('triangle', 1460, 1880, 0.028, 0.16, 0.12);
+    this.noise(0.025, 0.08, 3200, 0.01, 'highpass');
   }
 
   cannon(): void {

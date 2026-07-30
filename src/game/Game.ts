@@ -20,9 +20,10 @@ const ISLAND_COLLIDERS = [
 
 type Ball = { mesh: THREE.Mesh; velocity: THREE.Vector3; life: number; owner: 'player' | 'enemy' | 'ally'; damage: number; source: THREE.Group };
 type Loot = { group: THREE.Group; kind: 'gold' | 'med'; value: number; active: boolean; bob: number };
-type ShipAi = { group: THREE.Group; velocity: THREE.Vector3; hp: number; maxHp: number; cooldown: number; seed: number; rank: number; coins: number; levelTimer: number; name: string };
+type ShipAi = { group: THREE.Group; velocity: THREE.Vector3; hp: number; maxHp: number; cooldown: number; collideCooldown: number; seed: number; rank: number; coins: number; levelTimer: number; name: string };
 type Ally = { group: THREE.Group; velocity: THREE.Vector3; cooldown: number; offset: THREE.Vector3 };
 type Castaway = { group: THREE.Group; rescued: boolean; cost: number };
+type FloatingText = { element: HTMLElement; position: THREE.Vector3; life: number; maxLife: number; lift: number };
 
 export class Game {
   private readonly renderer: THREE.WebGLRenderer;
@@ -52,6 +53,7 @@ export class Game {
   private readonly islandMarker: THREE.Mesh;
   private readonly dockMarker: THREE.Mesh;
   private readonly nameplates = this.getElement('#nameplates');
+  private readonly floatingTextsLayer = this.getElement('#floating-texts');
   private readonly mapEnemies = this.getElement('#map-enemies');
   private flagColor = '#e54b39';
   private frame = 0;
@@ -74,6 +76,8 @@ export class Game {
   private upgradeOpen = false;
   private dockCooldown = 0;
   private wakeTimer = 0;
+  private playerCollideCooldown = 0;
+  private readonly floatingTexts: FloatingText[] = [];
 
   private playerShipRadius(): number {
     return 1.0 + Math.min(12, this.hullLevel) * 0.16;
@@ -149,6 +153,7 @@ export class Game {
       this.updatePlayer(delta, elapsedRaw);
       this.updateAllies(delta, elapsedRaw);
       this.updateEnemies(delta, elapsedRaw);
+      this.updateShipCollisions(delta);
       this.updateBalls(delta);
       this.updateLoot(delta, elapsedRaw);
       this.updateCastaways();
@@ -157,6 +162,7 @@ export class Game {
       if (this.spawnTimer <= 0 && this.enemies.length < 8 + Math.min(this.wave, 6)) { this.spawnEnemy(); this.spawnTimer = Math.max(1.4, 4.2 - this.wave * 0.24); }
       if (this.kills >= this.wave * 4) this.wave += 1;
     }
+    this.updateFloatingTexts(delta);
     this.updateGuidance();
     this.updateNameplates();
     this.nameplates.classList.toggle('hidden', this.paused || this.gameOver || this.upgradeOpen);
@@ -251,6 +257,7 @@ export class Game {
 
   private updateEnemies(delta: number, elapsedRaw: number): void {
     for (const enemy of this.enemies) {
+      enemy.collideCooldown = Math.max(0, enemy.collideCooldown - delta);
       enemy.coins += delta * (1.1 + enemy.rank * 0.22);
       enemy.levelTimer -= delta;
       if ((enemy.coins >= 22 + enemy.rank * 10 || enemy.levelTimer <= 0) && this.canEnemyUpgrade(enemy)) this.upgradeEnemy(enemy);
@@ -281,6 +288,63 @@ export class Game {
 
   private canEnemyUpgrade(enemy: ShipAi): boolean {
     return enemy.group.position.distanceTo(this.player.position) > 31;
+  }
+
+  private updateShipCollisions(delta: number): void {
+    this.playerCollideCooldown = Math.max(0, this.playerCollideCooldown - delta);
+    for (const enemy of this.enemies) {
+      const minDistance = this.playerShipRadius() + 0.75 * enemy.group.scale.x;
+      const offset = enemy.group.position.clone().sub(this.player.position).setY(0);
+      const distance = offset.length();
+      if (distance > 0.001 && distance < minDistance) {
+        const normal = offset.normalize();
+        const push = (minDistance - distance) * 0.55 + 0.18;
+        enemy.group.position.addScaledVector(normal, push);
+        this.player.position.addScaledVector(normal, -push * 0.65);
+        enemy.velocity.addScaledVector(normal, 4.4);
+        this.playerVelocity.addScaledVector(normal, -3.4);
+        if (this.playerCollideCooldown <= 0 && enemy.collideCooldown <= 0) {
+          this.hp -= 10;
+          enemy.hp -= 10;
+          this.playerCollideCooldown = 0.55;
+          enemy.collideCooldown = 0.55;
+          this.spawnDamageText(this.player.position, 10, 'player');
+          this.spawnDamageText(enemy.group.position, 10, 'enemy');
+          this.makeSplash(this.player.position.clone().lerp(enemy.group.position, 0.5), '#ffffff', 0.45);
+          this.audio.hit();
+          if (this.hp <= 0) this.gameOver = true;
+          if (enemy.hp <= 0) this.sinkEnemy(enemy);
+        }
+      }
+    }
+
+    for (let i = 0; i < this.enemies.length; i += 1) {
+      for (let j = i + 1; j < this.enemies.length; j += 1) {
+        const a = this.enemies[i];
+        const b = this.enemies[j];
+        const minDistance = 0.82 * (a.group.scale.x + b.group.scale.x);
+        const offset = b.group.position.clone().sub(a.group.position).setY(0);
+        const distance = offset.length();
+        if (distance <= 0.001 || distance >= minDistance) continue;
+        const normal = offset.normalize();
+        const push = (minDistance - distance) * 0.5 + 0.12;
+        a.group.position.addScaledVector(normal, -push);
+        b.group.position.addScaledVector(normal, push);
+        a.velocity.addScaledVector(normal, -3.2);
+        b.velocity.addScaledVector(normal, 3.2);
+        if (a.collideCooldown <= 0 && b.collideCooldown <= 0) {
+          a.hp -= 10;
+          b.hp -= 10;
+          a.collideCooldown = 0.55;
+          b.collideCooldown = 0.55;
+          this.spawnDamageText(a.group.position, 10, 'enemy');
+          this.spawnDamageText(b.group.position, 10, 'enemy');
+          this.makeSplash(a.group.position.clone().lerp(b.group.position, 0.5), '#ffffff', 0.42);
+          if (a.hp <= 0) this.sinkEnemy(a, false);
+          if (b.hp <= 0 && this.enemies.includes(b)) this.sinkEnemy(b, false);
+        }
+      }
+    }
   }
 
   private getTargetThreat(target: THREE.Group): number {
@@ -346,12 +410,12 @@ export class Game {
       ball.life -= delta; ball.mesh.position.addScaledVector(ball.velocity, delta); ball.mesh.position.y = 0.55 + Math.sin((1 - ball.life) * Math.PI) * 0.85;
       if (ball.owner !== 'enemy') {
         const hit = this.enemies.find((enemy) => ball.mesh.position.distanceTo(enemy.group.position) < 1.35 * enemy.group.scale.x);
-        if (hit) { hit.hp -= ball.damage; this.makeSplash(ball.mesh.position, '#f8d66d'); this.removeBall(i); if (hit.hp <= 0) this.sinkEnemy(hit); continue; }
+        if (hit) { hit.hp -= ball.damage; this.spawnDamageText(hit.group.position, ball.damage, 'enemy'); this.makeSplash(ball.mesh.position, '#f8d66d'); this.removeBall(i); if (hit.hp <= 0) this.sinkEnemy(hit); continue; }
       } else {
         const enemyHit = this.enemies.find((enemy) => enemy.group !== ball.source && ball.mesh.position.distanceTo(enemy.group.position) < 1.35 * enemy.group.scale.x);
-        if (enemyHit) { enemyHit.hp -= ball.damage; this.makeSplash(ball.mesh.position, '#ffdd8a'); this.removeBall(i); if (enemyHit.hp <= 0) this.sinkEnemy(enemyHit, false); continue; }
+        if (enemyHit) { enemyHit.hp -= ball.damage; this.spawnDamageText(enemyHit.group.position, ball.damage, 'enemy'); this.makeSplash(ball.mesh.position, '#ffdd8a'); this.removeBall(i); if (enemyHit.hp <= 0) this.sinkEnemy(enemyHit, false); continue; }
         if (ball.mesh.position.distanceTo(this.player.position) < 1.35 * this.player.scale.x) {
-          this.hp -= ball.damage; this.audio.hit(); this.makeSplash(this.player.position, '#e54b39'); this.removeBall(i); if (this.hp <= 0) this.gameOver = true; continue;
+          this.hp -= ball.damage; this.audio.hit(); this.spawnDamageText(this.player.position, ball.damage, 'player'); this.makeSplash(this.player.position, '#e54b39'); this.removeBall(i); if (this.hp <= 0) this.gameOver = true; continue;
         }
       }
       if (ball.life <= 0 || Math.abs(ball.mesh.position.x) > SEA.halfWidth + 5 || Math.abs(ball.mesh.position.z) > SEA.halfDepth + 5) this.removeBall(i);
@@ -471,7 +535,7 @@ export class Game {
     group.position.set(Math.cos(angle) * (SEA.halfWidth - 4), 0, Math.sin(angle) * (SEA.halfDepth - 4)); group.scale.setScalar(0.82 + rank * 0.08);
     this.applyShipUpgradeVisual(group, rank);
     const names = ['Black Finn', 'Red Hook', 'Mako', 'Storm Rat', 'One-Eye', 'Cannon Kid', 'Sea Fang', 'Drift Jack', 'Skull Minnow'];
-    this.scene.add(group); this.enemies.push({ group, velocity: new THREE.Vector3(), hp: 45 + rank * 22, maxHp: 45 + rank * 22, cooldown: 0.8 + Math.random() * 1.6, seed: Math.random() * 100, rank, coins: Math.random() * 18, levelTimer: 7 + Math.random() * 8, name: names[Math.floor(Math.random() * names.length)] });
+    this.scene.add(group); this.enemies.push({ group, velocity: new THREE.Vector3(), hp: 45 + rank * 22, maxHp: 45 + rank * 22, cooldown: 0.8 + Math.random() * 1.6, collideCooldown: Math.random() * 0.3, seed: Math.random() * 100, rank, coins: Math.random() * 18, levelTimer: 7 + Math.random() * 8, name: names[Math.floor(Math.random() * names.length)] });
   }
 
   private spawnLoot(kind: Loot['kind'], origin?: THREE.Vector3): void {
@@ -897,6 +961,39 @@ export class Game {
     }));
   }
 
+  private spawnDamageText(position: THREE.Vector3, amount: number, kind: 'enemy' | 'player'): void {
+    const element = document.createElement('div');
+    element.className = `damage-float ${kind === 'player' ? 'player-hit' : 'enemy-hit'}`;
+    element.textContent = `-${Math.round(amount)}`;
+    this.floatingTextsLayer.appendChild(element);
+    this.floatingTexts.push({
+      element,
+      position: position.clone().add(new THREE.Vector3(0, 1.35, 0)),
+      life: 0.82,
+      maxLife: 0.82,
+      lift: 1.25 + Math.random() * 0.35,
+    });
+  }
+
+  private updateFloatingTexts(delta: number): void {
+    for (let i = this.floatingTexts.length - 1; i >= 0; i -= 1) {
+      const text = this.floatingTexts[i];
+      text.life -= delta;
+      text.position.y += text.lift * delta;
+      const progress = 1 - Math.max(0, text.life / text.maxLife);
+      const screen = text.position.clone().project(this.camera);
+      text.element.style.left = `${(screen.x * 0.5 + 0.5) * window.innerWidth}px`;
+      text.element.style.top = `${(-screen.y * 0.5 + 0.5) * window.innerHeight}px`;
+      text.element.style.opacity = `${Math.max(0, text.life / text.maxLife)}`;
+      text.element.style.transform = `translate(-50%, -50%) translateY(${-18 * progress}px) scale(${1 + progress * 0.22})`;
+      text.element.style.display = screen.z > 1 ? 'none' : 'block';
+      if (text.life <= 0) {
+        text.element.remove();
+        this.floatingTexts.splice(i, 1);
+      }
+    }
+  }
+
   private makeSplash(position: THREE.Vector3, color: string, scale = 0.7): void {
     const group = new THREE.Group(); group.userData.life = 0.38; group.userData.maxLife = 0.38; const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85 });
     for (let i = 0; i < 9; i += 1) { const shard = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.35 * scale), mat.clone()); shard.position.copy(position); shard.position.y = 0.42; shard.rotation.y = (i / 9) * Math.PI * 2; shard.position.x += Math.cos(shard.rotation.y) * 0.32 * scale; shard.position.z += Math.sin(shard.rotation.y) * 0.32 * scale; group.add(shard); }
@@ -962,7 +1059,9 @@ export class Game {
     for (const ally of this.allies) this.scene.remove(ally.group);
     for (const castaway of this.castaways) this.scene.remove(castaway.group);
     for (const effect of this.vfx) this.scene.remove(effect);
+    for (const text of this.floatingTexts) text.element.remove();
     this.balls.length = 0; this.enemies.length = 0; this.loot.length = 0; this.allies.length = 0; this.castaways.length = 0; this.vfx.length = 0;
+    this.floatingTexts.length = 0;
   }
 
   private getHudState(): HudState {

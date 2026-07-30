@@ -385,6 +385,32 @@ body {
   display: none;
 }
 
+#floating-texts {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.damage-float {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  color: #fff;
+  font-size: 18px;
+  font-weight: 950;
+  text-shadow:
+    0 2px 0 rgba(0, 0, 0, 0.65),
+    0 0 8px rgba(255, 255, 255, 0.55);
+  will-change: transform, opacity;
+}
+
+.damage-float.player-hit {
+  color: #ff3030;
+  text-shadow:
+    0 2px 0 rgba(0, 0, 0, 0.78),
+    0 0 9px rgba(255, 48, 48, 0.75);
+}
+
 .nameplate {
   position: absolute;
   min-width: 76px;
