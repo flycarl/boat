@@ -83,6 +83,10 @@ export class Game {
     return 1.0 + Math.min(12, this.hullLevel) * 0.16;
   }
 
+  private shipScaleForLevel(level: number): number {
+    return 0.82 + Math.max(1, Math.min(12, Math.floor(level))) * 0.08;
+  }
+
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.renderer = createRenderer(canvas);
     this.renderer.toneMappingExposure = this.tuning.exposure;
@@ -177,14 +181,13 @@ export class Game {
   private restart(): void {
     this.clearDynamic();
     this.player.position.set(0, 0, 0);
-    this.player.scale.setScalar(0.82);
     this.playerVelocity.set(0, 0, 0);
-    this.coins = 0; this.kills = 0; this.wave = 1; this.hp = this.maxHp();
     this.cannonLevel = 1; this.hullLevel = 1; this.speedLevel = 1;
+    this.coins = 0; this.kills = 0; this.wave = 1; this.hp = this.maxHp();
     this.maxAmmo = MAX_START_AMMO; this.ammo = this.maxAmmo; this.reloading = false; this.reloadTimer = 0;
     this.cooldown = 0; this.dockCooldown = 0; this.elapsed = 0; this.paused = false; this.upgradeOpen = false; this.gameOver = false; this.spawnTimer = 0.2;
     this.paintFlag(this.player, this.flagColor);
-    this.applyShipUpgradeVisual(this.player, this.hullLevel);
+    this.resizeFleet();
     this.getElement('#flag-menu').querySelectorAll<HTMLButtonElement>('button').forEach((button) => button.classList.toggle('selected', button.dataset.flag === this.flagColor));
     for (let i = 0; i < 14; i += 1) this.spawnLoot('gold');
     for (let i = 0; i < 6; i += 1) this.spawnLoot('med');
@@ -399,7 +402,7 @@ export class Game {
     enemy.levelTimer = 9 + Math.random() * 9;
     enemy.maxHp += 22;
     enemy.hp = enemy.maxHp;
-    enemy.group.scale.setScalar(0.82 + enemy.rank * 0.08);
+    enemy.group.scale.setScalar(this.shipScaleForLevel(enemy.rank));
     this.applyShipUpgradeVisual(enemy.group, enemy.rank);
     this.makeSplash(enemy.group.position, '#7ee9ff', 0.85);
   }
@@ -511,12 +514,12 @@ export class Game {
   private minUpgradeCost(): number { return Math.min(this.cannonLevel * 28, this.hullLevel * 30, this.speedLevel * 24); }
 
   private resizeFleet(): void {
-    const scale = 0.78 + this.hullLevel * 0.13 + this.cannonLevel * 0.04;
-    this.player.scale.setScalar(scale);
+    this.player.scale.setScalar(this.shipScaleForLevel(this.hullLevel));
     this.applyShipUpgradeVisual(this.player, this.hullLevel);
     this.allies.forEach((ally) => {
-      ally.group.scale.setScalar(0.62 + this.hullLevel * 0.05);
-      this.applyShipUpgradeVisual(ally.group, Math.max(1, Math.floor(this.hullLevel / 2)));
+      const allyLevel = Math.max(1, Math.floor(this.hullLevel / 2));
+      ally.group.scale.setScalar(this.shipScaleForLevel(allyLevel));
+      this.applyShipUpgradeVisual(ally.group, allyLevel);
     });
   }
 
@@ -532,7 +535,7 @@ export class Game {
     const rank = Math.min(12, Math.max(1, Math.floor(this.hullLevel * 0.65) + Math.floor(this.wave / 2) + THREE.MathUtils.randInt(-1, 2)));
     const angle = Math.random() * Math.PI * 2;
     const group = this.createShip('#7d4d28', '#ded3b5', '#111111', 'raft');
-    group.position.set(Math.cos(angle) * (SEA.halfWidth - 4), 0, Math.sin(angle) * (SEA.halfDepth - 4)); group.scale.setScalar(0.82 + rank * 0.08);
+    group.position.set(Math.cos(angle) * (SEA.halfWidth - 4), 0, Math.sin(angle) * (SEA.halfDepth - 4)); group.scale.setScalar(this.shipScaleForLevel(rank));
     this.applyShipUpgradeVisual(group, rank);
     const names = ['Black Finn', 'Red Hook', 'Mako', 'Storm Rat', 'One-Eye', 'Cannon Kid', 'Sea Fang', 'Drift Jack', 'Skull Minnow'];
     this.scene.add(group); this.enemies.push({ group, velocity: new THREE.Vector3(), hp: 45 + rank * 22, maxHp: 45 + rank * 22, cooldown: 0.8 + Math.random() * 1.6, collideCooldown: Math.random() * 0.3, seed: Math.random() * 100, rank, coins: Math.random() * 18, levelTimer: 7 + Math.random() * 8, name: names[Math.floor(Math.random() * names.length)] });
@@ -576,8 +579,9 @@ export class Game {
 
   private addAlly(): void {
     const group = this.createShip('#9b6634', '#ded3b5', this.flagColor, 'raft');
-    group.scale.setScalar(0.65); group.position.copy(this.player.position).add(new THREE.Vector3(-2 - this.allies.length, 0, 2));
-    this.applyShipUpgradeVisual(group, Math.max(1, Math.floor(this.hullLevel / 2)));
+    const allyLevel = Math.max(1, Math.floor(this.hullLevel / 2));
+    group.scale.setScalar(this.shipScaleForLevel(allyLevel)); group.position.copy(this.player.position).add(new THREE.Vector3(-2 - this.allies.length, 0, 2));
+    this.applyShipUpgradeVisual(group, allyLevel);
     this.scene.add(group); this.allies.push({ group, velocity: new THREE.Vector3(), cooldown: 0.7, offset: new THREE.Vector3(-2.2 - this.allies.length * 1.3, 0, 2.2 + this.allies.length * 0.8) });
   }
 
