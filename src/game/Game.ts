@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { InputController } from '../core/InputController';
 import { Loop } from '../core/Loop';
 import { createRenderer, resizeRenderer } from '../core/Renderer';
+import { OceanSurface } from '../environment/OceanSurface';
 import { AudioSystem } from '../systems/AudioSystem';
 import { CameraRig } from '../systems/CameraRig';
 import { DebugTools, type DebugTuning } from '../systems/DebugTools';
@@ -57,7 +58,7 @@ type RemotePeer = {
 export class Game {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
-  private readonly camera = new THREE.PerspectiveCamera(52, 1, 0.1, 140);
+  private readonly camera = new THREE.PerspectiveCamera(52, 1, 0.1, 280);
   private readonly raycaster = new THREE.Raycaster();
   private readonly seaPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   private readonly mouse = new THREE.Vector2();
@@ -66,6 +67,7 @@ export class Game {
   private readonly audio = new AudioSystem();
   private readonly hud = new Hud();
   private readonly cameraRig = new CameraRig(this.camera);
+  private readonly ocean = new OceanSurface(SEA.halfWidth, SEA.halfDepth);
   private readonly loop = new Loop((delta, elapsed) => this.update(delta, elapsed), () => this.render());
   private readonly tuning: DebugTuning = { speed: 5.4, dashMultiplier: 1, acceleration: 3.2, cameraLag: 0.13, exposure: 1.08, maxDpr: 1.75 };
   private readonly debugTools: DebugTools;
@@ -85,6 +87,7 @@ export class Game {
   private readonly floatingTextsLayer = this.getElement('#floating-texts');
   private readonly killFeed = this.getElement('#kill-feed');
   private readonly mapEnemies = this.getElement('#map-enemies');
+  private readonly mapIslands = this.getElement('#map-islands');
   private readonly remotePeers = new Map<string, RemotePeer>();
   private readonly clientId = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
   private readonly roomChannel: BroadcastChannel | null;
@@ -149,6 +152,7 @@ export class Game {
     this.getElement('#upgrade-cannon').addEventListener('click', () => this.tryUpgrade('cannon'));
     this.getElement('#upgrade-hull').addEventListener('click', () => this.tryUpgrade('hull'));
     this.getElement('#upgrade-speed').addEventListener('click', () => this.tryUpgrade('speed'));
+    this.createMinimapIslands();
     this.createScene();
     this.restart();
   }
@@ -280,6 +284,7 @@ export class Game {
   private update(deltaRaw: number, elapsedRaw: number): void {
     const delta = Math.min(deltaRaw, 0.05);
     this.frame += 1;
+    this.ocean.update(elapsedRaw);
     resizeRenderer(this.renderer, this.camera, this.tuning.maxDpr);
     this.updateMouseWorld();
     const playerActive = this.isNetworkActive();
@@ -307,6 +312,12 @@ export class Game {
     this.nameplates.classList.toggle('hidden', this.paused || this.gameOver || this.upgradeOpen || this.sailorOpen);
     this.updateUpgradeOverlay();
     this.updateSailorOverlay();
+    const fog = this.scene.fog as THREE.Fog | null;
+    if (fog) {
+      const fogBlend = 1 - Math.exp(-delta / 0.32);
+      fog.near = THREE.MathUtils.lerp(fog.near, playerActive ? 46 : 112, fogBlend);
+      fog.far = THREE.MathUtils.lerp(fog.far, playerActive ? 104 : 238, fogBlend);
+    }
     if (playerActive) this.cameraRig.update(delta, this.player.position, this.tuning.cameraLag);
     else this.cameraRig.updateOverview(delta);
     this.hud.update(this.getHudState());
@@ -391,7 +402,7 @@ export class Game {
     const sun = new THREE.DirectionalLight('#fff1b5', 2.75);
     sun.position.set(-16, 24, 14); sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048);
     sun.shadow.camera.left = -44; sun.shadow.camera.right = 44; sun.shadow.camera.top = 34; sun.shadow.camera.bottom = -34;
-    this.scene.add(sun, this.createOcean(), this.createWorldProps(), this.routeLine, this.islandMarker, this.dockMarker, this.player);
+    this.scene.add(sun, this.ocean, this.createWorldProps(), this.routeLine, this.islandMarker, this.dockMarker, this.player);
   }
 
   private updateMouseWorld(): void {
@@ -780,6 +791,12 @@ export class Game {
   private maxHp(): number { return 85 + (this.hullLevel - 1) * 40; }
   private minUpgradeCost(): number { return Math.min(this.cannonLevel * 28, this.hullLevel * 30, this.speedLevel * 24); }
 
+  private roomDifficultyLevel(): number {
+    let level = this.hullLevel;
+    for (const peer of this.remotePeers.values()) level = Math.max(level, peer.hullLevel);
+    return level;
+  }
+
   private isNearUpgradeDock(): boolean {
     return this.dockCooldown <= 0 && this.player.position.distanceTo(UPGRADE_DOCK) < 1.35 + this.playerShipRadius();
   }
@@ -828,7 +845,7 @@ export class Game {
   }
 
   private spawnEnemy(): void {
-    const rank = Math.min(12, Math.max(1, Math.floor(this.hullLevel * 0.65) + Math.floor(this.wave / 2) + THREE.MathUtils.randInt(-1, 2)));
+    const rank = Math.min(12, Math.max(1, Math.floor(this.roomDifficultyLevel() * 0.65) + Math.floor(this.wave / 2) + THREE.MathUtils.randInt(-1, 2)));
     const angle = Math.random() * Math.PI * 2;
     const group = this.createShip('#7d4d28', '#ded3b5', '#111111', 'raft');
     group.position.set(Math.cos(angle) * (SEA.halfWidth - 4), 0, Math.sin(angle) * (SEA.halfDepth - 4)); group.scale.setScalar(this.shipScaleForLevel(rank));
@@ -1126,16 +1143,19 @@ export class Game {
     ship.add(kit);
   }
 
-  private createOcean(): THREE.Mesh {
-    const texture = this.createWaterTexture(); texture.wrapS = THREE.RepeatWrapping; texture.wrapT = THREE.RepeatWrapping; texture.repeat.set(5.35, 4.05);
-    const ocean = new THREE.Mesh(new THREE.PlaneGeometry(SEA.halfWidth * 2.5, SEA.halfDepth * 2.5, 64, 64), new THREE.MeshStandardMaterial({ color: '#22c7dc', map: texture, roughness: 0.46, metalness: 0.01 }));
-    ocean.rotation.x = -Math.PI / 2; ocean.receiveShadow = true; return ocean;
-  }
-
   private createWorldProps(): THREE.Group {
     const props = new THREE.Group(); const sand = new THREE.MeshStandardMaterial({ color: '#ffd36f', roughness: 0.82 }); const palm = new THREE.MeshStandardMaterial({ color: '#31c85d', roughness: 0.68 }); const trunk = new THREE.MeshStandardMaterial({ color: '#a76027', roughness: 0.72 }); const rockMat = new THREE.MeshStandardMaterial({ color: '#d9e1dc', roughness: 0.88 }); const pierMat = new THREE.MeshStandardMaterial({ color: '#9a5b24', roughness: 0.75 });
     for (const [x, z, s] of [[-23, -14, 1.85], [20, 12, 1.4], [-18, 13, 1.1], [21, -10, 1.0]] as const) {
       const island = new THREE.Group(); const base = new THREE.Mesh(new THREE.CylinderGeometry(2.6 * s, 3.4 * s, 0.45, 18), sand); base.position.y = 0.05; island.add(base);
+      const shallows = new THREE.Mesh(
+        new THREE.CircleGeometry(4.45 * s, 40),
+        new THREE.MeshBasicMaterial({ color: '#8affdf', transparent: true, opacity: 0.14, depthWrite: false, side: THREE.DoubleSide }),
+      );
+      shallows.rotation.x = -Math.PI / 2;
+      shallows.rotation.z = (x - z) * 0.04;
+      shallows.scale.set(1.08, 0.86, 1);
+      shallows.position.y = -0.008;
+      island.add(shallows);
       const shore = new THREE.Mesh(new THREE.RingGeometry(2.72 * s, 3.55 * s, 36), new THREE.MeshBasicMaterial({ color: '#f6ffff', transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false }));
       shore.rotation.x = -Math.PI / 2;
       shore.position.y = 0.07;
@@ -1207,6 +1227,19 @@ export class Game {
       dot.style.top = `${((enemy.group.position.z / SEA.halfDepth) * 0.5 + 0.5) * 100}%`;
       dot.style.transform = `translate(-50%, -50%) scale(${Math.min(1.8, 0.8 + enemy.rank * 0.12)})`;
       return dot;
+    }));
+  }
+
+  private createMinimapIslands(): void {
+    this.mapIslands.replaceChildren(...ISLAND_COLLIDERS.map((island, index) => {
+      const outline = document.createElement('i');
+      outline.className = 'map-island';
+      outline.style.left = `${((island.center.x / SEA.halfWidth) * 0.5 + 0.5) * 100}%`;
+      outline.style.top = `${((island.center.z / SEA.halfDepth) * 0.5 + 0.5) * 100}%`;
+      outline.style.width = `${(island.radius / SEA.halfWidth) * 100}%`;
+      outline.style.height = `${(island.radius / SEA.halfDepth) * 100}%`;
+      outline.style.setProperty('--island-rotation', `${index * 23 - 18}deg`);
+      return outline;
     }));
   }
 
@@ -1364,40 +1397,6 @@ export class Game {
     wake.rotation.y = ship.rotation.y;
     this.scene.add(wake);
     this.vfx.push(wake);
-  }
-
-  private createWaterTexture(): THREE.CanvasTexture {
-    const c = document.createElement('canvas'); c.width = 512; c.height = 512; const ctx = c.getContext('2d'); if (!ctx) throw new Error('Missing canvas context');
-    const image = ctx.createImageData(c.width, c.height);
-    const data = image.data;
-    for (let y = 0; y < c.height; y += 1) {
-      for (let x = 0; x < c.width; x += 1) {
-        const i = (y * c.width + x) * 4;
-        const large = Math.sin(x * 0.018 + y * 0.012) * 0.5 + Math.cos(x * 0.011 - y * 0.02) * 0.5;
-        const small = Math.sin((x + y) * 0.075) * 0.18 + Math.cos((x - y) * 0.061) * 0.14;
-        const value = THREE.MathUtils.clamp(0.5 + large * 0.22 + small, 0, 1);
-        data[i] = 4 + value * 34;
-        data[i + 1] = 148 + value * 78;
-        data[i + 2] = 184 + value * 58;
-        data[i + 3] = 255;
-      }
-    }
-    ctx.putImageData(image, 0, 0);
-    const glow = ctx.createRadialGradient(160, 130, 12, 160, 130, 360);
-    glow.addColorStop(0, 'rgba(127,255,233,.32)');
-    glow.addColorStop(0.55, 'rgba(46,220,220,.12)');
-    glow.addColorStop(1, 'rgba(0,75,120,0)');
-    ctx.fillStyle = glow;
-    ctx.fillRect(0, 0, c.width, c.height);
-    ctx.strokeStyle = 'rgba(245,255,255,.13)';
-    ctx.lineWidth = 1.2;
-    for (let i = 0; i < 26; i += 1) {
-      const y = (i * 73) % 512;
-      ctx.beginPath();
-      for (let x = -20; x < 540; x += 32) ctx.lineTo(x, y + Math.sin(x * 0.024 + i * 1.7) * 5);
-      ctx.stroke();
-    }
-    const texture = new THREE.CanvasTexture(c); texture.colorSpace = THREE.SRGBColorSpace; return texture;
   }
 
   private clampToSea(position: THREE.Vector3, margin: number): void {

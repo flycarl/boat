@@ -3,7 +3,7 @@ import * as THREE from 'three';
 export class CameraRig {
   private readonly desiredPosition = new THREE.Vector3();
   private readonly lookTarget = new THREE.Vector3();
-  private readonly overviewPosition = new THREE.Vector3(0, 82, 58);
+  private readonly overviewPosition = new THREE.Vector3(0, 148, 66);
   private readonly overviewTarget = new THREE.Vector3(0, 0, 0);
 
   constructor(

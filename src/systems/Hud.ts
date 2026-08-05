@@ -45,13 +45,14 @@ export class Hud {
     this.killValue.textContent = `${state.kills}+${state.allies}`;
     this.waveValue.textContent = String(state.wave);
     this.levelValue.textContent = String(state.hullLevel);
-    const minutes = Math.floor(state.elapsed / 60).toString().padStart(2, '0');
-    const seconds = Math.floor(state.elapsed % 60).toString().padStart(2, '0');
+    const safeElapsed = Number.isFinite(state.elapsed) ? Math.max(0, state.elapsed) : 0;
+    const minutes = Math.floor(safeElapsed / 60).toString().padStart(2, '0');
+    const seconds = Math.floor(safeElapsed % 60).toString().padStart(2, '0');
     this.timerValue.textContent = `${minutes}:${seconds}`;
     this.statusLine.textContent = state.gameOver
       ? '船沉了：点击重新开始'
       : state.paused
-        ? '已暂停：ESC 继续，可更改旗帜'
+        ? '个人观战：你已隐藏，其他玩家继续战斗'
         : state.nearUpgrade
           ? '已到港口：可以直接升级'
           : state.nearSailor
@@ -65,7 +66,7 @@ export class Hud {
     if (state.gameOver) this.overlay.querySelector('h1')!.textContent = '你被击沉了';
     else this.overlay.querySelector('h1')!.textContent = '暂停';
     const p = this.overlay.querySelector('p');
-    if (p) p.textContent = state.gameOver ? 'Backspace 重新开始 · ESC 返回菜单' : 'ESC 继续 · Backspace 重新开始 · 右键换弹';
+    if (p) p.textContent = state.gameOver ? '只能重新开始 · ESC 返回菜单' : '个人观战模式 · 其他玩家会继续战斗 · ESC 继续';
     const resume = this.overlay.querySelector<HTMLElement>('#resume-button');
     if (resume) resume.style.display = state.gameOver ? 'none' : 'inline-block';
   }

@@ -414,6 +414,23 @@ body {
     rgba(5, 18, 26, 0.62);
   box-shadow: 0 12px 34px rgba(0, 0, 0, 0.32);
   pointer-events: none;
+  overflow: hidden;
+}
+
+#map-islands,
+#map-enemies {
+  position: absolute;
+  inset: 0;
+}
+
+.map-island {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid rgba(255, 211, 111, 0.9);
+  border-radius: 48% 55% 46% 58%;
+  background: rgba(255, 211, 111, 0.18);
+  box-shadow: 0 0 7px rgba(255, 236, 155, 0.38), inset 0 0 5px rgba(255, 255, 255, 0.2);
+  transform: translate(-50%, -50%) rotate(var(--island-rotation, 0deg));
 }
 
 #map-player,
@@ -443,11 +460,6 @@ body {
   transform-origin: left center;
   background: #2cff75;
   box-shadow: 0 0 10px #2cff75;
-}
-
-#map-enemies {
-  position: absolute;
-  inset: 0;
 }
 
 .map-enemy {
