@@ -248,7 +248,7 @@ body {
 
 #boss-hud {
   position: absolute;
-  top: max(18px, env(safe-area-inset-top));
+  top: calc(max(18px, env(safe-area-inset-top)) + 82px);
   left: 50%;
   z-index: 8;
   display: none;
@@ -287,7 +287,10 @@ body {
 #map-richest i { background: #ffd229; box-shadow: 0 0 0 3px rgba(255,210,41,.3), 0 0 10px #ffd229; }
 
 @media (max-width: 700px) {
-  #boss-hud { top: 8px; width: calc(100vw - 24px); }
+  #boss-hud {
+    top: calc(max(8px, env(safe-area-inset-top)) + 142px);
+    width: calc(100vw - 24px);
+  }
 }
 
 #overlay.visible {

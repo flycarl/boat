@@ -2181,6 +2181,8 @@ export class Game {
     const arrow = this.getElement('#boss-arrow');
     hud.classList.toggle('visible', this.boss !== null);
     if (!this.boss) { arrow.classList.remove('visible'); return; }
+    const mainHudBottom = this.getElement('#hud').getBoundingClientRect().bottom;
+    hud.style.top = `${Math.ceil(mainHudBottom + 12)}px`;
     this.getElement('#boss-name').textContent = this.boss.name;
     this.getElement('#boss-hp-value').textContent = `${Math.ceil(this.boss.hp)} / ${this.boss.maxHp}`;
     (this.getElement('#boss-hp-fill') as HTMLElement).style.transform = `scaleX(${Math.max(0, this.boss.hp / this.boss.maxHp)})`;
