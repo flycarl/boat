@@ -938,11 +938,13 @@ export class Game {
     this.clampToSea(boss.group.position, 4.5);
     this.pushPointOffIslands(boss.group.position, 3.2);
     boss.group.position.y = 0.25 + Math.sin(elapsedRaw * 1.9) * 0.18;
+    this.animateBossModel(boss, elapsedRaw);
   }
 
   private animateRemoteBoss(delta: number, elapsedRaw: number): void {
     if (!this.boss) return;
     this.boss.group.position.y = 0.25 + Math.sin(elapsedRaw * 1.9) * 0.18;
+    this.animateBossModel(this.boss, elapsedRaw);
     this.boss.cooldown -= delta;
     if (this.isNetworkActive() && this.boss.group.position.distanceTo(this.player.position) < 3.8 && this.boss.cooldown <= 0) {
       this.hitPlayerByBoss(24);
@@ -974,19 +976,42 @@ export class Game {
     const body = new THREE.MeshStandardMaterial({ color: kind === 'kraken' ? '#6d278f' : kind === 'serpent' ? '#167a67' : '#a33a35', roughness: 0.48, metalness: kind === 'crab' ? 0.35 : 0.05 });
     const eyeMat = new THREE.MeshStandardMaterial({ color: '#ffcf55', emissive: '#a64212', emissiveIntensity: 0.75 });
     if (kind === 'kraken') {
-      const head = new THREE.Mesh(new THREE.SphereGeometry(1.55, 20, 14), body); head.scale.y = 1.25; head.position.y = 1.1; group.add(head);
-      for (let i = 0; i < 8; i += 1) { const limb = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.32, 3.5, 9), body); const a = i / 8 * Math.PI * 2; limb.position.set(Math.cos(a) * 1.4, 0.15, Math.sin(a) * 1.4); limb.rotation.z = Math.PI / 2.5; limb.rotation.y = -a; group.add(limb); }
+      const head = new THREE.Mesh(new THREE.SphereGeometry(1.55, 20, 14), body); head.scale.y = 1.25; head.position.y = 1.1; head.userData.bossPart = 'head'; group.add(head);
+      for (let i = 0; i < 8; i += 1) { const limb = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.32, 3.5, 9), body); const a = i / 8 * Math.PI * 2; limb.position.set(Math.cos(a) * 1.4, 0.15, Math.sin(a) * 1.4); limb.rotation.z = Math.PI / 2.5; limb.rotation.y = -a; limb.userData = { bossPart: 'tentacle', index: i, baseZ: limb.rotation.z }; group.add(limb); }
     } else if (kind === 'serpent') {
-      for (let i = 0; i < 7; i += 1) { const segment = new THREE.Mesh(new THREE.SphereGeometry(0.72 - i * 0.045, 14, 10), body); segment.position.set(Math.sin(i * 0.75) * 0.65, 0.55 + i * 0.16, i * 0.62 - 1.8); group.add(segment); }
+      for (let i = 0; i < 7; i += 1) { const segment = new THREE.Mesh(new THREE.SphereGeometry(0.72 - i * 0.045, 14, 10), body); segment.position.set(Math.sin(i * 0.75) * 0.65, 0.55 + i * 0.16, i * 0.62 - 1.8); segment.userData = { bossPart: 'segment', index: i, baseY: segment.position.y, baseX: segment.position.x }; group.add(segment); }
     } else {
-      const shell = new THREE.Mesh(new THREE.SphereGeometry(1.65, 18, 10), body); shell.scale.set(1.35, 0.55, 1); shell.position.y = 0.85; group.add(shell);
-      for (const side of [-1, 1]) { const claw = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.55, 1), body); claw.position.set(side * 2, 0.75, -0.35); claw.rotation.y = side * 0.35; group.add(claw); }
-      for (let i = 0; i < 6; i += 1) { const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.2, 1.9, 8), body); leg.position.set((i < 3 ? -1 : 1) * 1.35, 0.25, ((i % 3) - 1) * 0.8); leg.rotation.z = (i < 3 ? -1 : 1) * 1.05; group.add(leg); }
+      const shell = new THREE.Mesh(new THREE.SphereGeometry(1.65, 18, 10), body); shell.scale.set(1.35, 0.55, 1); shell.position.y = 0.85; shell.userData.bossPart = 'shell'; group.add(shell);
+      for (const side of [-1, 1]) { const claw = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.55, 1), body); claw.position.set(side * 2, 0.75, -0.35); claw.rotation.y = side * 0.35; claw.userData = { bossPart: 'claw', side, baseY: claw.rotation.y }; group.add(claw); }
+      for (let i = 0; i < 6; i += 1) { const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.2, 1.9, 8), body); leg.position.set((i < 3 ? -1 : 1) * 1.35, 0.25, ((i % 3) - 1) * 0.8); leg.rotation.z = (i < 3 ? -1 : 1) * 1.05; leg.userData = { bossPart: 'leg', index: i }; group.add(leg); }
     }
     for (const x of [-0.45, 0.45]) { const eye = new THREE.Mesh(new THREE.SphereGeometry(0.16, 10, 8), eyeMat); eye.position.set(x, 1.55, kind === 'serpent' ? -2.4 : -1.25); group.add(eye); }
     group.scale.setScalar(1.25);
     group.traverse((node) => { if (node instanceof THREE.Mesh) node.castShadow = true; });
     return group;
+  }
+
+  private animateBossModel(boss: SeaBoss, time: number): void {
+    boss.group.traverse((node) => {
+      const part = node.userData.bossPart as string | undefined;
+      if (part === 'head') node.scale.set(1 + Math.sin(time * 2.1) * 0.045, 1.25 + Math.sin(time * 2.1) * 0.07, 1 + Math.sin(time * 2.1) * 0.045);
+      else if (part === 'tentacle') {
+        const index = Number(node.userData.index);
+        node.rotation.z = Number(node.userData.baseZ) + Math.sin(time * 2.4 + index * 0.75) * 0.24;
+        node.rotation.x = Math.cos(time * 1.8 + index) * 0.16;
+      } else if (part === 'segment') {
+        const index = Number(node.userData.index);
+        node.position.x = Number(node.userData.baseX) + Math.sin(time * 2.2 - index * 0.72) * 0.42;
+        node.position.y = Number(node.userData.baseY) + Math.cos(time * 2.4 - index * 0.55) * 0.13;
+      } else if (part === 'claw') {
+        const side = Number(node.userData.side);
+        node.rotation.y = Number(node.userData.baseY) + side * (0.18 + Math.sin(time * 3.1) * 0.2);
+      } else if (part === 'leg') {
+        node.rotation.x = Math.sin(time * 4 + Number(node.userData.index) * 0.9) * 0.22;
+      } else if (part === 'shell') {
+        node.rotation.z = Math.sin(time * 1.7) * 0.045;
+      }
+    });
   }
 
   private damageBoss(amount: number, contributorId?: string): void {
@@ -1172,17 +1197,10 @@ export class Game {
         continue;
       }
       if (this.boss && this.isEnemyAuthority() && ball.mesh.position.distanceTo(this.boss.group.position) < 3.1) {
+        const hitPosition = this.boss.group.position.clone();
         const contributorId = ball.owner === 'remote' ? ball.shooterId : ball.owner === 'player' ? this.clientId : undefined;
         this.damageBoss(ball.damage, contributorId);
-        this.spawnDamageText(this.boss.group.position, ball.damage, 'enemy');
-        this.makeSplash(ball.mesh.position, '#d65cff', 0.75);
-        this.removeBall(i);
-        continue;
-      }
-      if (this.boss && ball.mesh.position.distanceTo(this.boss.group.position) < 3.1) {
-        const contributorId = ball.owner === 'remote' ? ball.shooterId : ball.owner === 'player' ? this.clientId : undefined;
-        this.damageBoss(ball.damage, contributorId);
-        this.spawnDamageText(this.boss.group.position, ball.damage, 'enemy');
+        this.spawnDamageText(hitPosition, ball.damage, 'enemy');
         this.makeSplash(ball.mesh.position, '#d65cff', 0.75);
         this.removeBall(i);
         continue;
