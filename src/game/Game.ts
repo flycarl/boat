@@ -762,19 +762,16 @@ export class Game {
       enemy.collideCooldown = Math.max(0, enemy.collideCooldown - delta);
       enemy.coins += delta * (1.1 + enemy.rank * 0.22);
       enemy.levelTimer -= delta;
-      const upgradeCost = 22 + enemy.rank * 10;
-      const wantsUpgrade = enemy.rank < 12 && (enemy.coins >= upgradeCost || enemy.levelTimer <= 0);
-      if (wantsUpgrade && enemy.coins >= upgradeCost && this.canEnemyUpgrade(enemy)) this.upgradeEnemy(enemy);
+      const wantsHiddenUpgrade = enemy.rank < 12 && (enemy.coins >= 22 + enemy.rank * 10 || enemy.levelTimer <= 0);
+      if (wantsHiddenUpgrade && this.canEnemyUpgrade(enemy)) this.upgradeEnemy(enemy);
       const target = this.findAiTarget(enemy);
       const toTarget = target.position.clone().sub(enemy.group.position);
       const distance = toTarget.length();
       const targetThreat = this.getTargetThreat(target);
-      const shouldFlee = !wantsUpgrade && (enemy.hp / enemy.maxHp < 0.28 || (targetThreat > enemy.rank + 3 && enemy.rank < 8));
-      const desired = wantsUpgrade
-        ? UPGRADE_DOCK.clone().sub(enemy.group.position).setY(0).normalize().multiplyScalar(4.5 + enemy.rank * 0.12)
-        : shouldFlee
-          ? enemy.group.position.clone().sub(target.position).setY(0).normalize().multiplyScalar(5.2 + enemy.rank * 0.25)
-          : toTarget.normalize().multiplyScalar(distance > 9 ? 4.1 + enemy.rank * 0.35 : 1.8);
+      const shouldFlee = enemy.hp / enemy.maxHp < 0.28 || (targetThreat > enemy.rank + 3 && enemy.rank < 8) || (wantsHiddenUpgrade && !this.canEnemyUpgrade(enemy));
+      const desired = shouldFlee
+        ? enemy.group.position.clone().sub(target.position).setY(0).normalize().multiplyScalar(5.2 + enemy.rank * 0.25)
+        : toTarget.normalize().multiplyScalar(distance > 9 ? 4.1 + enemy.rank * 0.35 : 1.8);
       desired.add(this.getSeparationForce(enemy).multiplyScalar(2.6));
       desired.x += Math.sin(elapsedRaw * 0.75 + enemy.seed) * 1.5;
       desired.z += Math.cos(elapsedRaw * 0.65 + enemy.seed) * 1.5;
@@ -787,12 +784,12 @@ export class Game {
       if (enemy.velocity.lengthSq() > 4 && Math.sin(elapsedRaw * 8 + enemy.seed) > 0.82) this.createWake(enemy.group, 0.9 + enemy.rank * 0.08);
       enemy.cooldown -= delta;
       const attackRange = target === this.player ? 22 : 17;
-      if (!wantsUpgrade && !shouldFlee && distance < attackRange && enemy.cooldown <= 0) { this.fireAt(enemy.group, target.position, 'enemy', 10 + enemy.rank * 3, 11.5, '#251414'); enemy.cooldown = 2.2 + Math.random() * 0.7; }
+      if (!shouldFlee && distance < attackRange && enemy.cooldown <= 0) { this.fireAt(enemy.group, target.position, 'enemy', 10 + enemy.rank * 3, 11.5, '#251414'); enemy.cooldown = 2.2 + Math.random() * 0.7; }
     }
   }
 
   private canEnemyUpgrade(enemy: ShipAi): boolean {
-    return enemy.group.position.distanceTo(UPGRADE_DOCK) < 1.45 + 0.8 * enemy.group.scale.x;
+    return enemy.group.position.distanceTo(this.player.position) > 31;
   }
 
   private updateShipCollisions(delta: number, includePlayer = true): void {
@@ -924,9 +921,8 @@ export class Game {
   }
 
   private upgradeEnemy(enemy: ShipAi): void {
-    const upgradeCost = 22 + enemy.rank * 10;
     enemy.rank = Math.min(12, enemy.rank + 1);
-    enemy.coins = Math.max(0, enemy.coins - upgradeCost);
+    enemy.coins = 0;
     enemy.levelTimer = 9 + Math.random() * 9;
     enemy.maxHp += 22;
     enemy.hp = enemy.maxHp;
