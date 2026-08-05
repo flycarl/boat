@@ -44,6 +44,7 @@ type RoomMessage = {
   z: number;
   rotation: number;
   hullLevel: number;
+  coins: number;
   hp: number;
   maxHp: number;
   flagColor: string;
@@ -54,7 +55,7 @@ type RoomMessage = {
 };
 type KillMessage = { type: 'kill'; id: string; room: string; killer: string; victim: string };
 type ProjectileMessage = { type: 'projectile'; id: string; room: string; projectileId: string; shooterName: string; x: number; z: number; vx: number; vz: number; damage: number };
-type PresenceMessage = { type: 'leave'; id: string; room: string; name: string };
+type PresenceMessage = { type: 'join' | 'leave'; id: string; room: string; name: string };
 type NetworkMessage = RoomMessage | KillMessage | ProjectileMessage | PresenceMessage;
 type RemotePeer = {
   group: THREE.Group;
@@ -64,6 +65,7 @@ type RemotePeer = {
   hp: number;
   maxHp: number;
   hullLevel: number;
+  coins: number;
   lastSeen: number;
   collideCooldown: number;
 };
@@ -105,6 +107,7 @@ export class Game {
   private readonly nameplates = this.getElement('#nameplates');
   private readonly floatingTextsLayer = this.getElement('#floating-texts');
   private readonly killFeed = this.getElement('#kill-feed');
+  private readonly leaderboard = this.getElement('#leaderboard');
   private readonly mapEnemies = this.getElement('#map-enemies');
   private readonly mapIslands = this.getElement('#map-islands');
   private readonly app = this.getElement('#app');
@@ -154,6 +157,9 @@ export class Game {
 
   constructor(private readonly canvas: HTMLCanvasElement, private readonly options: GameOptions) {
     this.renderer = createRenderer(canvas);
+    // Game is constructed from the join form's trusted submit gesture, so unlock
+    // immediately instead of making the player click once more before hearing wind.
+    void this.audio.unlock();
     this.getElement('#pause-room-code strong').textContent = options.roomCode;
     this.roomChannel = 'BroadcastChannel' in window ? new BroadcastChannel(`boat-room-${options.roomCode}`) : null;
     this.roomChannel?.addEventListener('message', this.onRoomMessage);
@@ -212,6 +218,13 @@ export class Game {
         this.resizeFleet();
         this.cameraRig.snapTo(this.player.position, this.cameraScaleForLevel(this.hullLevel));
       },
+      collectNearestGold: () => {
+        if (!this.loot.some((item) => item.active && item.kind === 'gold')) this.spawnLoot('gold', this.player.position);
+        const gold = this.loot.find((item) => item.active && item.kind === 'gold');
+        if (!gold) return;
+        this.player.position.copy(gold.group.position).setY(0);
+        this.playerVelocity.set(0, 0, 0);
+      },
     };
   }
 
@@ -256,6 +269,9 @@ export class Game {
     if (!('WebSocket' in window) || location.protocol === 'file:') return null;
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const socket = new WebSocket(`${protocol}//${location.host}/ws`);
+    socket.addEventListener('open', () => {
+      socket.send(JSON.stringify({ type: 'join', id: this.clientId, room: this.options.roomCode, name: this.options.playerName } satisfies PresenceMessage));
+    });
     socket.addEventListener('message', (event) => {
       try {
         this.handleNetworkMessage(JSON.parse(String(event.data)) as NetworkMessage);
@@ -276,6 +292,10 @@ export class Game {
       this.spawnRemoteProjectile(data);
       return;
     }
+    if (data.type === 'join') {
+      this.showRoomNotice(`${data.name} 加入了房间`, 'join');
+      return;
+    }
     if (data.type === 'leave') {
       const peer = this.remotePeers.get(data.id);
       if (peer) {
@@ -285,6 +305,7 @@ export class Game {
       }
       return;
     }
+    if (data.type !== 'state') return;
     let peer = this.remotePeers.get(data.id);
     if (!peer) {
       const group = this.createShip('#7d4d28', '#ded3b5', data.flagColor, 'raft');
@@ -301,15 +322,16 @@ export class Game {
         hp: data.hp,
         maxHp: data.maxHp,
         hullLevel: data.hullLevel,
+        coins: data.coins ?? 0,
         lastSeen: performance.now(),
         collideCooldown: 0,
       };
       this.remotePeers.set(data.id, peer);
-      this.showRoomNotice(`${data.name} 加入了房间`, 'join');
     }
     peer.name = data.name;
     peer.hp = data.hp;
     peer.maxHp = data.maxHp;
+    peer.coins = data.coins ?? 0;
     peer.lastSeen = performance.now();
     peer.targetPosition.set(data.x, 0, data.z);
     peer.targetRotation = data.rotation;
@@ -373,6 +395,7 @@ export class Game {
       if (this.kills >= this.wave * 4) this.wave += 1;
     }
     if (!playerActive) {
+      this.audio.setSailing(0);
       this.updateEnemies(delta, elapsedRaw);
       this.updateShipCollisions(delta, false);
       this.updateBalls(delta);
@@ -415,6 +438,7 @@ export class Game {
         z: this.player.position.z,
         rotation: this.player.rotation.y,
         hullLevel: this.hullLevel,
+        coins: this.coins,
         hp: this.hp,
         maxHp: this.maxHp(),
         flagColor: this.sailDesign.primaryColor,
@@ -483,7 +507,6 @@ export class Game {
     this.applySailDesign(this.player, this.sailDesign);
     this.resizeFleet();
     this.updateSailEditor();
-    for (let i = 0; i < 14; i += 1) this.spawnLoot('gold');
     for (let i = 0; i < 6; i += 1) this.spawnLoot('med');
     for (let i = 0; i < 7; i += 1) this.spawnEnemy();
     this.createCastaways();
@@ -517,6 +540,7 @@ export class Game {
     this.forward.copy(toMouse.lengthSq() > 0.2 ? toMouse.normalize() : new THREE.Vector3(0, 0, -1).applyQuaternion(this.player.quaternion));
     const speed = this.tuning.speed + (this.speedLevel - 1) * 0.95;
     this.playerVelocity.lerp(this.forward.clone().multiplyScalar(speed), 1 - Math.exp(-this.tuning.acceleration * delta));
+    this.audio.setSailing(this.playerVelocity.length() / Math.max(1, speed));
     this.player.position.addScaledVector(this.playerVelocity, delta);
     this.clampToSea(this.player.position, 1.8);
     this.resolveIslandCollision(this.player.position, this.player.scale.x * 1.0);
@@ -773,7 +797,6 @@ export class Game {
         else { this.hp = Math.min(this.maxHp(), this.hp + item.value); this.audio.upgrade(); }
       }
     }
-    if (this.loot.filter((item) => item.active && item.kind === 'gold').length < 6) this.spawnLoot('gold');
     if (this.loot.filter((item) => item.active && item.kind === 'med').length < 3) this.spawnLoot('med');
   }
 
@@ -899,9 +922,10 @@ export class Game {
 
   private sinkEnemy(enemy: ShipAi, rewardPlayer = true, killer = this.options.playerName): void {
     this.enemies.splice(this.enemies.indexOf(enemy), 1); this.scene.remove(enemy.group);
-    if (rewardPlayer) { this.kills += 1; this.coins += 18 + enemy.rank * 9 + Math.floor(enemy.coins); }
+    if (rewardPlayer) this.kills += 1;
     this.broadcastKill(killer, enemy.name);
-    for (let i = 0; i < 2; i += 1) this.spawnLoot('gold', enemy.group.position);
+    const goldDrops = 2 + Math.min(4, Math.floor(enemy.rank / 3));
+    for (let i = 0; i < goldDrops; i += 1) this.spawnLoot('gold', enemy.group.position);
     if (Math.random() < 0.35) this.spawnLoot('med', enemy.group.position);
     this.makeSplash(enemy.group.position, '#f8d66d', 1.1); this.audio.sink();
   }
@@ -951,13 +975,43 @@ export class Game {
 
   private spawnLoot(kind: Loot['kind'], origin?: THREE.Vector3): void {
     const group = new THREE.Group();
-    const mat = kind === 'gold'
-      ? new THREE.MeshStandardMaterial({ color: '#8a5a30', roughness: 0.72 })
-      : new THREE.MeshStandardMaterial({ color: '#f8f8f8', roughness: 0.42, emissive: '#2bff72', emissiveIntensity: 0.18 });
-    const accent = new THREE.MeshStandardMaterial({ color: kind === 'gold' ? '#f8d66d' : '#e54b39', roughness: 0.35, metalness: 0.18 });
-    const body = new THREE.Mesh(kind === 'gold' ? new THREE.BoxGeometry(0.72, 0.48, 0.72) : new THREE.BoxGeometry(0.72, 0.36, 0.72), mat);
-    const bandA = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.08, 0.18), accent); const bandB = bandA.clone(); bandA.position.y = 0.26; bandB.position.y = 0.26; bandB.rotation.y = Math.PI / 2;
-    group.add(body, bandA, bandB);
+    group.userData.lootKind = kind;
+    if (kind === 'gold') {
+      const faceMaterial = new THREE.MeshStandardMaterial({
+        color: '#f5b82e',
+        emissive: '#6f3c00',
+        emissiveIntensity: 0.2,
+        roughness: 0.22,
+        metalness: 0.82,
+      });
+      const edgeMaterial = new THREE.MeshStandardMaterial({ color: '#ffe27a', roughness: 0.18, metalness: 0.9 });
+      const markMaterial = new THREE.MeshStandardMaterial({ color: '#a96508', roughness: 0.3, metalness: 0.72 });
+      const coin = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.16, 32, 1), faceMaterial);
+      coin.rotation.x = Math.PI / 2;
+      coin.castShadow = true;
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(0.49, 0.035, 8, 32), edgeMaterial);
+      const innerRim = new THREE.Mesh(new THREE.TorusGeometry(0.36, 0.018, 7, 28), markMaterial);
+      const markStem = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.43, 0.035), markMaterial);
+      const markTop = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.07, 0.035), markMaterial);
+      const markBottom = markTop.clone();
+      markStem.position.z = 0.1;
+      markTop.position.set(0, 0.15, 0.1);
+      markBottom.position.set(0, -0.15, 0.1);
+      rim.position.z = 0.095;
+      innerRim.position.z = 0.1;
+      group.add(coin, rim, innerRim, markStem, markTop, markBottom);
+      group.rotation.z = -0.08;
+    } else {
+      const bodyMaterial = new THREE.MeshStandardMaterial({ color: '#f8f8f8', roughness: 0.42, emissive: '#2bff72', emissiveIntensity: 0.18 });
+      const crossMaterial = new THREE.MeshStandardMaterial({ color: '#e54b39', roughness: 0.35, metalness: 0.18 });
+      const body = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.36, 0.72), bodyMaterial);
+      const bandA = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.08, 0.18), crossMaterial);
+      const bandB = bandA.clone();
+      bandA.position.y = 0.22;
+      bandB.position.y = 0.22;
+      bandB.rotation.y = Math.PI / 2;
+      group.add(body, bandA, bandB);
+    }
     group.position.copy(origin ?? this.randomOpenWaterPosition());
     if (origin) group.position.add(new THREE.Vector3(THREE.MathUtils.randFloatSpread(4), 0, THREE.MathUtils.randFloatSpread(4)));
     this.clampToSea(group.position, 2);
@@ -1584,6 +1638,37 @@ export class Game {
       dot.style.transform = `translate(-50%, -50%) scale(${Math.min(1.8, 0.8 + enemy.rank * 0.12)})`;
       return dot;
     }));
+    this.updateLeaderboard();
+  }
+
+  private updateLeaderboard(): void {
+    const rows = [
+      { id: this.clientId, name: this.options.playerName, coins: this.coins, hullLevel: this.hullLevel, self: true },
+      ...[...this.remotePeers.entries()]
+        .filter(([, peer]) => peer.group.visible)
+        .map(([id, peer]) => ({ id, name: peer.name, coins: peer.coins, hullLevel: peer.hullLevel, self: false })),
+    ].sort((a, b) => b.coins - a.coins || b.hullLevel - a.hullLevel || a.name.localeCompare(b.name));
+    const topFive = rows.slice(0, 5);
+    const selfInTopFive = topFive.some((row) => row.self);
+    const displayed = selfInTopFive ? topFive : [...topFive, rows.find((row) => row.self)!];
+    this.leaderboard.replaceChildren(...displayed.map((row) => {
+      const rank = rows.findIndex((entry) => entry.id === row.id) + 1;
+      const item = document.createElement('div');
+      item.className = `leaderboard-row${row.self ? ' self' : ''}${rank > 5 ? ' outside-top' : ''}`;
+      const place = document.createElement('span');
+      place.className = 'leaderboard-rank';
+      place.textContent = `#${rank}`;
+      const name = document.createElement('strong');
+      name.textContent = row.self ? `${row.name}（你）` : row.name;
+      const level = document.createElement('span');
+      level.className = 'leaderboard-level';
+      level.textContent = `Lv.${row.hullLevel}`;
+      const coins = document.createElement('span');
+      coins.className = 'leaderboard-coins';
+      coins.textContent = String(row.coins);
+      item.append(place, name, level, coins);
+      return item;
+    }));
   }
 
   private createMinimapIslands(): void {
@@ -1801,8 +1886,10 @@ export class Game {
         enemies: this.enemies.length,
         cannonBalls: this.balls.length,
         crates: this.loot.filter((item) => item.active).length,
+        goldCoins: this.loot.filter((item) => item.active && item.kind === 'gold').length,
         vfx: this.vfx.length,
       },
+      audio: this.audio.getDiagnostics(),
       player: {
         hp: this.hp,
         hullLevel: this.hullLevel,

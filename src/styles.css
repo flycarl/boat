@@ -572,6 +572,72 @@ body {
   overflow: hidden;
 }
 
+#leaderboard {
+  position: absolute;
+  right: max(16px, env(safe-area-inset-right));
+  bottom: calc(max(16px, env(safe-area-inset-bottom)) + 124px);
+  z-index: 7;
+  display: grid;
+  gap: 5px;
+  width: 236px;
+  padding: 8px;
+  border: 1px solid rgba(255, 244, 214, 0.26);
+  color: #fff4d6;
+  background: linear-gradient(180deg, rgba(11, 36, 49, 0.76), rgba(5, 18, 26, 0.64));
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(10px);
+  pointer-events: none;
+}
+
+#leaderboard::before {
+  content: "金币排行";
+  color: rgba(255, 244, 214, 0.7);
+  font-size: 0.66rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.leaderboard-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 42px 48px;
+  align-items: center;
+  gap: 6px;
+  min-height: 25px;
+  padding: 4px 6px;
+  background: rgba(255, 255, 255, 0.055);
+  font-size: 0.78rem;
+}
+
+.leaderboard-row.self {
+  outline: 1px solid rgba(44, 255, 117, 0.62);
+  background: rgba(44, 255, 117, 0.12);
+}
+
+.leaderboard-row.outside-top {
+  margin-top: 4px;
+  border-top: 1px solid rgba(255, 244, 214, 0.16);
+}
+
+.leaderboard-rank,
+.leaderboard-level {
+  color: rgba(255, 244, 214, 0.68);
+  font-variant-numeric: tabular-nums;
+}
+
+.leaderboard-row strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.leaderboard-coins {
+  justify-self: end;
+  color: #f8d66d;
+  font-weight: 950;
+  font-variant-numeric: tabular-nums;
+}
+
 #map-islands,
 #map-enemies {
   position: absolute;
@@ -809,6 +875,19 @@ body {
     bottom: calc(max(18px, env(safe-area-inset-bottom)) + 112px);
     width: 126px;
     height: 92px;
+  }
+
+  #leaderboard {
+    right: max(10px, env(safe-area-inset-right));
+    bottom: calc(max(18px, env(safe-area-inset-bottom)) + 214px);
+    width: min(218px, calc(100vw - 20px));
+    padding: 7px;
+  }
+
+  .leaderboard-row {
+    grid-template-columns: 30px minmax(0, 1fr) 38px 42px;
+    gap: 5px;
+    font-size: 0.72rem;
   }
 
   #pause-card {

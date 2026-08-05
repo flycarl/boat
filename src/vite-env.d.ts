@@ -12,7 +12,18 @@ interface ThreeGameDiagnostics {
     enemies: number;
     cannonBalls: number;
     crates: number;
+    goldCoins: number;
     vfx: number;
+  };
+  audio: {
+    unlocked: boolean;
+    contextState: AudioContextState | 'unavailable';
+    ambienceActive: boolean;
+    sailingLevel: number;
+    events: {
+      pickup: number;
+      cannon: number;
+    };
   };
   player: {
     hp: number;
@@ -47,5 +58,6 @@ interface Window {
   __THREE_GAME_DIAGNOSTICS__?: ThreeGameDiagnostics;
   __BOAT_DEBUG__?: {
     setHullLevel: (level: number) => void;
+    collectNearestGold: () => void;
   };
 }
