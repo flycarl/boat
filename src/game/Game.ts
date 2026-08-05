@@ -1643,10 +1643,18 @@ export class Game {
 
   private updateLeaderboard(): void {
     const rows = [
-      { id: this.clientId, name: this.options.playerName, coins: this.coins, hullLevel: this.hullLevel, self: true },
+      { id: this.clientId, name: this.options.playerName, coins: this.coins, hullLevel: this.hullLevel, self: true, ai: false },
       ...[...this.remotePeers.entries()]
         .filter(([, peer]) => peer.group.visible)
-        .map(([id, peer]) => ({ id, name: peer.name, coins: peer.coins, hullLevel: peer.hullLevel, self: false })),
+        .map(([id, peer]) => ({ id, name: peer.name, coins: peer.coins, hullLevel: peer.hullLevel, self: false, ai: false })),
+      ...this.enemies.map((enemy) => ({
+        id: `ai-${enemy.group.uuid}`,
+        name: enemy.name,
+        coins: enemy.coins,
+        hullLevel: enemy.rank,
+        self: false,
+        ai: true,
+      })),
     ].sort((a, b) => b.coins - a.coins || b.hullLevel - a.hullLevel || a.name.localeCompare(b.name));
     const topFive = rows.slice(0, 5);
     const selfInTopFive = topFive.some((row) => row.self);
@@ -1654,18 +1662,18 @@ export class Game {
     this.leaderboard.replaceChildren(...displayed.map((row) => {
       const rank = rows.findIndex((entry) => entry.id === row.id) + 1;
       const item = document.createElement('div');
-      item.className = `leaderboard-row${row.self ? ' self' : ''}${rank > 5 ? ' outside-top' : ''}`;
+      item.className = `leaderboard-row${row.self ? ' self' : ''}${row.ai ? ' ai' : ''}${rank > 5 ? ' outside-top' : ''}`;
       const place = document.createElement('span');
       place.className = 'leaderboard-rank';
       place.textContent = `#${rank}`;
       const name = document.createElement('strong');
-      name.textContent = row.self ? `${row.name}（你）` : row.name;
+      name.textContent = row.self ? `${row.name}（你）` : row.ai ? `AI · ${row.name}` : row.name;
       const level = document.createElement('span');
       level.className = 'leaderboard-level';
       level.textContent = `Lv.${row.hullLevel}`;
       const coins = document.createElement('span');
       coins.className = 'leaderboard-coins';
-      coins.textContent = String(row.coins);
+      coins.textContent = String(Math.floor(row.coins));
       item.append(place, name, level, coins);
       return item;
     }));

@@ -614,6 +614,11 @@ body {
   background: rgba(44, 255, 117, 0.12);
 }
 
+.leaderboard-row.ai {
+  border-left: 2px solid rgba(255, 112, 92, 0.72);
+  background: rgba(255, 112, 92, 0.075);
+}
+
 .leaderboard-row.outside-top {
   margin-top: 4px;
   border-top: 1px solid rgba(255, 244, 214, 0.16);
