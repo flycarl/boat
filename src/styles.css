@@ -245,7 +245,9 @@ body {
 }
 
 #pause-card {
-  width: min(520px, calc(100vw - 32px));
+  width: min(760px, calc(100vw - 32px));
+  max-height: min(92vh, 760px);
+  overflow: auto;
   padding: 26px;
   border: 1px solid rgba(255, 244, 214, 0.28);
   background: linear-gradient(180deg, rgba(8, 31, 43, 0.92), rgba(5, 17, 25, 0.88));
@@ -271,30 +273,151 @@ body {
   color: rgba(255, 244, 214, 0.76);
 }
 
-#flag-menu {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
+#sail-customizer {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(255, 244, 214, 0.18);
 }
 
-#flag-menu button {
-  min-height: 44px;
+.sail-editor-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.sail-editor-heading h2 {
+  margin: 5px 0 6px !important;
+}
+
+.sail-preview-frame {
+  flex: 0 0 112px;
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  color: rgba(255, 244, 214, 0.62);
+  font-size: 0.66rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+#sail-preview {
+  width: 100px;
+  height: 88px;
+  object-fit: fill;
+  clip-path: polygon(19% 0, 81% 0, 100% 100%, 0 100%);
+  filter: drop-shadow(0 9px 12px rgba(0, 0, 0, 0.35));
+}
+
+#sail-menu {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.sail-layer {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.8fr) minmax(330px, 1.5fr);
+  align-items: center;
+  gap: 14px;
+  padding: 12px;
+  border: 1px solid rgba(255, 244, 214, 0.18);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.sail-layer-label {
+  display: grid;
+  grid-template-columns: 34px 1fr auto;
+  align-items: center;
+  gap: 9px;
+}
+
+.sail-layer-label strong,
+.sail-layer-label small {
+  display: block;
+}
+
+.sail-layer-label small {
+  margin-top: 2px;
+  color: rgba(255, 244, 214, 0.55);
+  font-size: 0.7rem;
+}
+
+.layer-number {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(248, 214, 109, 0.5);
+  border-radius: 50%;
+  color: #f8d66d;
+  font-weight: 950;
+}
+
+.sail-color {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  color: rgba(255, 244, 214, 0.62);
+  font-size: 0.62rem;
+}
+
+.sail-color input {
+  width: 42px;
+  height: 34px;
+  padding: 3px;
+  border: 1px solid rgba(255, 244, 214, 0.28);
+  background: rgba(0, 0, 0, 0.2);
+  cursor: pointer;
+}
+
+.sail-patterns {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 7px;
+}
+
+.sail-patterns button {
+  min-height: 58px;
+  display: grid;
+  place-items: center;
+  gap: 1px;
+  padding: 4px;
   border: 1px solid rgba(255, 244, 214, 0.28);
   color: #fff4d6;
   background: rgba(255, 255, 255, 0.08);
   cursor: pointer;
 }
 
-#flag-menu button.selected {
-  border-color: #4bb8ff;
-  box-shadow:
-    0 0 0 3px rgba(75, 184, 255, 0.92),
-    0 0 24px rgba(75, 184, 255, 0.55);
-  background: rgba(75, 184, 255, 0.16);
+.sail-patterns button b {
+  font-size: 1.35rem;
+  line-height: 1;
 }
+
+.sail-patterns button span {
+  color: rgba(255, 244, 214, 0.7);
+  font-size: 0.68rem;
+}
+
+.sail-patterns button:hover,
+.sail-patterns button:focus-visible {
+  border-color: rgba(248, 214, 109, 0.85);
+  background: rgba(248, 214, 109, 0.12);
+}
+
+.sail-patterns button.selected {
+  border-color: #f8d66d;
+  box-shadow:
+    inset 0 0 0 2px rgba(248, 214, 109, 0.56),
+    0 0 18px rgba(248, 214, 109, 0.2);
+  background: rgba(248, 214, 109, 0.14);
+}
+
+#overlay.gameover #sail-customizer { display: none; }
 
 #restart-button,
 #resume-button,
+#quit-room-button,
 #close-upgrade,
 #close-sailor,
 #buy-sailor,
@@ -308,6 +431,12 @@ body {
   background: linear-gradient(180deg, #ffe986, #ffb33e);
   font-weight: 900;
   cursor: pointer;
+}
+
+#quit-room-button {
+  color: #fff4d6;
+  border-color: rgba(255, 112, 92, 0.62);
+  background: linear-gradient(180deg, #a8362d, #681d24);
 }
 
 #upgrade-overlay,
@@ -379,11 +508,6 @@ body {
   filter: grayscale(0.8);
   cursor: not-allowed;
 }
-
-#flag-menu button[data-flag="#e54b39"] { border-top: 6px solid #e54b39; }
-#flag-menu button[data-flag="#1f63ff"] { border-top: 6px solid #1f63ff; }
-#flag-menu button[data-flag="#111111"] { border-top: 6px solid #111111; }
-#flag-menu button[data-flag="#f8d66d"] { border-top: 6px solid #f8d66d; }
 
 #crosshair {
   position: fixed;
@@ -644,5 +768,41 @@ body {
     bottom: calc(max(18px, env(safe-area-inset-bottom)) + 112px);
     width: 126px;
     height: 92px;
+  }
+
+  #pause-card {
+    padding: 18px;
+  }
+
+  .sail-editor-heading {
+    align-items: flex-start;
+  }
+
+  .sail-preview-frame {
+    flex-basis: 88px;
+  }
+
+  #sail-preview {
+    width: 78px;
+    height: 70px;
+  }
+
+  .sail-layer {
+    grid-template-columns: 1fr;
+    gap: 9px;
+  }
+
+  .sail-patterns button {
+    min-height: 54px;
+  }
+}
+
+@media (max-width: 480px) {
+  .sail-editor-heading p {
+    display: none;
+  }
+
+  .sail-patterns {
+    grid-template-columns: repeat(2, 1fr);
   }
 }

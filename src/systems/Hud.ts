@@ -52,7 +52,7 @@ export class Hud {
     this.statusLine.textContent = state.gameOver
       ? '船沉了：点击重新开始'
       : state.paused
-        ? '个人观战：你已隐藏，其他玩家继续战斗'
+        ? '个人观战：你已隐藏，可组合船帆图案'
         : state.nearUpgrade
           ? '已到港口：可以直接升级'
           : state.nearSailor

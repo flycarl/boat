@@ -122,19 +122,19 @@ export class OceanSurface extends THREE.Group {
           vec2 drift = vec2(uTime * 0.055, -uTime * 0.038);
           float broad = fbm(p * 0.027 + drift * 0.22);
           float current = fbm(p * 0.085 + drift);
-          float depthMix = smoothstep(0.23, 0.92, broad * 0.72 + current * 0.28);
+          float depthMix = smoothstep(0.25, 0.84, broad * 0.52 + current * 0.48);
           vec3 color = mix(uDeep, uMid, depthMix);
           color = mix(color, uShallow, smoothstep(0.7, 1.0, broad) * 0.42);
 
-          float longWaveA = 0.5 + 0.5 * sin(p.x * 0.25 + p.y * 0.16 + uTime * 0.68 + current * 3.2);
-          float longWaveB = 0.5 + 0.5 * sin(p.x * -0.18 + p.y * 0.34 - uTime * 0.51 + broad * 2.7);
-          float crest = pow(max(longWaveA, longWaveB), 15.0);
-          float fineA = pow(0.5 + 0.5 * sin(p.x * 0.82 + p.y * 0.46 + current * 5.0 + uTime * 0.88), 18.0);
-          float fineB = pow(0.5 + 0.5 * sin(p.x * -0.53 + p.y * 1.08 + broad * 4.0 - uTime * 0.72), 20.0);
-          float caustic = pow(0.5 + 0.5 * sin((p.x + p.y) * 0.66 + current * 7.0 - uTime * 0.92), 16.0);
-          float sparkle = smoothstep(0.82, 1.0, noise21(p * 0.42 + drift * 1.8)) * crest;
+          float longWave = 0.5 + 0.5 * sin(p.x * 0.23 + p.y * 0.15 + uTime * 0.68 + current * 4.2);
+          float crest = pow(longWave, 24.0) * smoothstep(0.45, 0.86, current);
+          float micro = smoothstep(0.82, 1.0, fbm(p * 0.19 + drift * 1.4));
+          float directional = 0.5 + 0.5 * sin(p.x * 0.46 + p.y * 0.28 + current * 4.8 + uTime * 0.82);
+          float thinCurrent = pow(directional, 18.0) * smoothstep(0.35, 0.85, current);
+          float sparkle = smoothstep(0.9, 1.0, noise21(p * 0.46 + drift * 1.8)) * crest;
 
-          color = mix(color, uFoam, crest * 0.07 + (fineA + fineB) * 0.035 + caustic * 0.045 + sparkle * 0.12);
+          color *= 0.88 + current * 0.18 + micro * 0.025;
+          color = mix(color, uFoam, directional * 0.012 + thinCurrent * 0.07 + crest * 0.065 + micro * 0.02 + sparkle * 0.08);
           float vignette = smoothstep(140.0, 250.0, length(p));
           color = mix(color, uDeep * 0.78, vignette);
           gl_FragColor = vec4(color, 0.82);

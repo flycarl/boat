@@ -61,12 +61,47 @@
           <p>个人观战模式 · 其他玩家会继续战斗 · ESC 继续</p>
           <button id="resume-button" type="button">继续游戏</button>
           <button id="restart-button" type="button">重新开始</button>
-          <h2>更换旗帜</h2>
-          <div id="flag-menu">
-            <button type="button" data-flag="#e54b39">红骷髅</button>
-            <button type="button" data-flag="#1f63ff">蓝海盗</button>
-            <button type="button" data-flag="#111111">黑旗</button>
-            <button type="button" data-flag="#f8d66d">金旗</button>
+          <button id="quit-room-button" type="button">退出房间</button>
+          <div id="sail-customizer">
+            <div class="sail-editor-heading">
+              <div>
+                <span class="eyebrow">SAIL WORKSHOP</span>
+                <h2>组合你的船帆</h2>
+                <p>上下两层图案会叠加在同一面帆上。</p>
+              </div>
+              <div class="sail-preview-frame">
+                <canvas id="sail-preview" width="256" height="256" aria-label="组合船帆预览"></canvas>
+                <span>组合预览</span>
+              </div>
+            </div>
+            <div id="sail-menu">
+              <section class="sail-layer" aria-labelledby="sail-layer-one-title">
+                <div class="sail-layer-label">
+                  <span class="layer-number">1</span>
+                  <div><strong id="sail-layer-one-title">第一层图案</strong><small>主徽记</small></div>
+                  <label class="sail-color">颜色 <input type="color" value="#e54b39" data-sail-color="primary" aria-label="第一层图案颜色" /></label>
+                </div>
+                <div class="sail-patterns">
+                  <button type="button" class="selected" data-sail-layer="primary" data-sail-pattern="anchor"><b>⚓</b><span>船锚</span></button>
+                  <button type="button" data-sail-layer="primary" data-sail-pattern="skull"><b>☠</b><span>骷髅</span></button>
+                  <button type="button" data-sail-layer="primary" data-sail-pattern="sun"><b>☀</b><span>太阳</span></button>
+                  <button type="button" data-sail-layer="primary" data-sail-pattern="compass"><b>✦</b><span>罗盘</span></button>
+                </div>
+              </section>
+              <section class="sail-layer" aria-labelledby="sail-layer-two-title">
+                <div class="sail-layer-label">
+                  <span class="layer-number">2</span>
+                  <div><strong id="sail-layer-two-title">第二层图案</strong><small>底纹与装饰</small></div>
+                  <label class="sail-color">颜色 <input type="color" value="#173f5f" data-sail-color="secondary" aria-label="第二层图案颜色" /></label>
+                </div>
+                <div class="sail-patterns">
+                  <button type="button" class="selected" data-sail-layer="secondary" data-sail-pattern="waves"><b>≈</b><span>海浪</span></button>
+                  <button type="button" data-sail-layer="secondary" data-sail-pattern="stripes"><b>╱</b><span>斜纹</span></button>
+                  <button type="button" data-sail-layer="secondary" data-sail-pattern="diamonds"><b>◆</b><span>菱纹</span></button>
+                  <button type="button" data-sail-layer="secondary" data-sail-pattern="stars"><b>✣</b><span>星点</span></button>
+                </div>
+              </section>
+            </div>
           </div>
         </div>
       </div>

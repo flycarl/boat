@@ -26,6 +26,14 @@ type Ally = { group: THREE.Group; velocity: THREE.Vector3; cooldown: number; off
 type Castaway = { group: THREE.Group; dock: THREE.Vector3; rescued: boolean; cost: number };
 type FloatingText = { element: HTMLElement; position: THREE.Vector3; life: number; maxLife: number; lift: number };
 export type GameOptions = { playerName: string; roomCode: string };
+type PrimarySailPattern = 'anchor' | 'skull' | 'sun' | 'compass';
+type SecondarySailPattern = 'waves' | 'stripes' | 'diamonds' | 'stars';
+type SailDesign = {
+  primaryPattern: PrimarySailPattern;
+  secondaryPattern: SecondarySailPattern;
+  primaryColor: string;
+  secondaryColor: string;
+};
 type RoomMessage = {
   type: 'state';
   id: string;
@@ -38,6 +46,9 @@ type RoomMessage = {
   hp: number;
   maxHp: number;
   flagColor: string;
+  sailPrimaryPattern?: PrimarySailPattern;
+  sailSecondaryPattern?: SecondarySailPattern;
+  sailSecondaryColor?: string;
   active: boolean;
 };
 type KillMessage = { type: 'kill'; id: string; room: string; killer: string; victim: string };
@@ -71,6 +82,12 @@ export class Game {
   private readonly loop = new Loop((delta, elapsed) => this.update(delta, elapsed), () => this.render());
   private readonly tuning: DebugTuning = { speed: 5.4, dashMultiplier: 1, acceleration: 3.2, cameraLag: 0.13, exposure: 1.08, maxDpr: 1.75 };
   private readonly debugTools: DebugTools;
+  private readonly sailDesign: SailDesign = {
+    primaryPattern: 'anchor',
+    secondaryPattern: 'waves',
+    primaryColor: '#e54b39',
+    secondaryColor: '#173f5f',
+  };
   private readonly player = this.createShip('#7d4d28', '#ded3b5', '#e54b39', 'raft');
   private readonly playerVelocity = new THREE.Vector3();
   private readonly forward = new THREE.Vector3();
@@ -93,7 +110,6 @@ export class Game {
   private readonly roomChannel: BroadcastChannel | null;
   private readonly socket: WebSocket | null;
   private networkTimer = 0;
-  private flagColor = '#e54b39';
   private frame = 0;
   private coins = 0;
   private kills = 0;
@@ -143,9 +159,11 @@ export class Game {
     this.dockMarker.rotation.x = -Math.PI / 2;
     this.dockMarker.position.copy(UPGRADE_DOCK).setY(0.11);
     window.addEventListener('keydown', this.onKeyDown);
-    this.getElement('#flag-menu').addEventListener('click', this.onFlagClick);
+    this.getElement('#sail-menu').addEventListener('click', this.onSailPatternClick);
+    this.getElement('#sail-menu').addEventListener('input', this.onSailColorInput);
     this.getElement('#resume-button').addEventListener('click', () => { this.paused = false; });
     this.getElement('#restart-button').addEventListener('click', () => this.restart());
+    this.getElement('#quit-room-button').addEventListener('click', () => this.quitRoom());
     this.getElement('#close-upgrade').addEventListener('click', () => this.leaveDock());
     this.getElement('#close-sailor').addEventListener('click', () => this.leaveSailorDock());
     this.getElement('#buy-sailor').addEventListener('click', () => this.buySailor());
@@ -188,12 +206,21 @@ export class Game {
     if (event.code === 'Digit3') this.tryUpgrade('speed');
   };
 
-  private readonly onFlagClick = (event: Event) => {
-    const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-flag]');
+  private readonly onSailPatternClick = (event: Event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-sail-layer]');
     if (!button) return;
-    this.flagColor = button.dataset.flag ?? this.flagColor;
-    this.getElement('#flag-menu').querySelectorAll('button').forEach((item) => item.classList.toggle('selected', item === button));
-    for (const ship of [this.player, ...this.allies.map((ally) => ally.group)]) this.paintFlag(ship, this.flagColor);
+    const layer = button.dataset.sailLayer;
+    if (layer === 'primary') this.sailDesign.primaryPattern = button.dataset.sailPattern as PrimarySailPattern;
+    if (layer === 'secondary') this.sailDesign.secondaryPattern = button.dataset.sailPattern as SecondarySailPattern;
+    this.updateSailEditor();
+  };
+
+  private readonly onSailColorInput = (event: Event) => {
+    const input = (event.target as HTMLElement).closest<HTMLInputElement>('input[data-sail-color]');
+    if (!input) return;
+    if (input.dataset.sailColor === 'primary') this.sailDesign.primaryColor = input.value;
+    if (input.dataset.sailColor === 'secondary') this.sailDesign.secondaryColor = input.value;
+    this.updateSailEditor();
   };
 
   private readonly onRoomMessage = (event: MessageEvent<NetworkMessage>) => {
@@ -257,7 +284,12 @@ export class Game {
       peer.group.scale.setScalar(this.shipScaleForLevel(data.hullLevel));
       this.applyShipUpgradeVisual(peer.group, data.hullLevel);
     }
-    this.paintFlag(peer.group, data.flagColor);
+    this.applySailDesign(peer.group, {
+      primaryPattern: data.sailPrimaryPattern ?? 'anchor',
+      secondaryPattern: data.sailSecondaryPattern ?? 'waves',
+      primaryColor: data.flagColor,
+      secondaryColor: data.sailSecondaryColor ?? '#173f5f',
+    });
   }
 
   private spawnRemoteProjectile(data: ProjectileMessage): void {
@@ -304,7 +336,18 @@ export class Game {
       if (this.spawnTimer <= 0 && this.enemies.length < 8 + Math.min(this.wave, 6)) { this.spawnEnemy(); this.spawnTimer = Math.max(1.4, 4.2 - this.wave * 0.24); }
       if (this.kills >= this.wave * 4) this.wave += 1;
     }
-    if (!playerActive) this.updateRemoteProjectilesAsSpectator(delta);
+    if (!playerActive) {
+      this.updateEnemies(delta, elapsedRaw);
+      this.updateShipCollisions(delta, false);
+      this.updateBalls(delta);
+      this.updateLoot(delta, elapsedRaw);
+      this.updateVfx(delta);
+      this.spawnTimer -= delta;
+      if (this.spawnTimer <= 0 && this.enemies.length < 8 + Math.min(this.wave, 6)) {
+        this.spawnEnemy();
+        this.spawnTimer = Math.max(1.4, 4.2 - this.wave * 0.24);
+      }
+    }
     this.updateRoomSync(delta);
     this.updateFloatingTexts(delta);
     this.updateGuidance();
@@ -338,7 +381,10 @@ export class Game {
         hullLevel: this.hullLevel,
         hp: this.hp,
         maxHp: this.maxHp(),
-        flagColor: this.flagColor,
+        flagColor: this.sailDesign.primaryColor,
+        sailPrimaryPattern: this.sailDesign.primaryPattern,
+        sailSecondaryPattern: this.sailDesign.secondaryPattern,
+        sailSecondaryColor: this.sailDesign.secondaryColor,
         active: this.isNetworkActive(),
       } satisfies RoomMessage);
       this.networkTimer = 0.08;
@@ -360,6 +406,27 @@ export class Game {
 
   private isNetworkActive(): boolean {
     return !this.paused && !this.upgradeOpen && !this.sailorOpen && !this.gameOver;
+  }
+
+  private quitRoom(): void {
+    this.sendNetworkMessage({
+      type: 'state',
+      id: this.clientId,
+      room: this.options.roomCode,
+      name: this.options.playerName,
+      x: this.player.position.x,
+      z: this.player.position.z,
+      rotation: this.player.rotation.y,
+      hullLevel: this.hullLevel,
+      hp: this.hp,
+      maxHp: this.maxHp(),
+      flagColor: this.sailDesign.primaryColor,
+      sailPrimaryPattern: this.sailDesign.primaryPattern,
+      sailSecondaryPattern: this.sailDesign.secondaryPattern,
+      sailSecondaryColor: this.sailDesign.secondaryColor,
+      active: false,
+    });
+    window.setTimeout(() => window.location.reload(), 60);
   }
 
   private lerpAngle(from: number, to: number, alpha: number): number {
@@ -385,9 +452,9 @@ export class Game {
     this.coins = 0; this.kills = 0; this.wave = 1; this.hp = this.maxHp();
     this.maxAmmo = MAX_START_AMMO; this.ammo = this.maxAmmo; this.reloading = false; this.reloadTimer = 0;
     this.cooldown = 0; this.dockCooldown = 0; this.sailorRespawnTimer = 0; this.elapsed = 0; this.paused = false; this.upgradeOpen = false; this.sailorOpen = false; this.gameOver = false; this.spawnTimer = 0.2;
-    this.paintFlag(this.player, this.flagColor);
+    this.applySailDesign(this.player, this.sailDesign);
     this.resizeFleet();
-    this.getElement('#flag-menu').querySelectorAll<HTMLButtonElement>('button').forEach((button) => button.classList.toggle('selected', button.dataset.flag === this.flagColor));
+    this.updateSailEditor();
     for (let i = 0; i < 14; i += 1) this.spawnLoot('gold');
     for (let i = 0; i < 6; i += 1) this.spawnLoot('med');
     for (let i = 0; i < 7; i += 1) this.spawnEnemy();
@@ -492,9 +559,9 @@ export class Game {
     return enemy.group.position.distanceTo(this.player.position) > 31;
   }
 
-  private updateShipCollisions(delta: number): void {
+  private updateShipCollisions(delta: number, includePlayer = true): void {
     this.playerCollideCooldown = Math.max(0, this.playerCollideCooldown - delta);
-    for (const enemy of this.enemies) {
+    if (includePlayer) for (const enemy of this.enemies) {
       const minDistance = this.playerShipRadius() + 0.75 * enemy.group.scale.x;
       const offset = enemy.group.position.clone().sub(this.player.position).setY(0);
       const distance = offset.length();
@@ -520,7 +587,7 @@ export class Game {
       }
     }
 
-    for (const peer of this.remotePeers.values()) {
+    if (includePlayer) for (const peer of this.remotePeers.values()) {
       if (!peer.group.visible) continue;
       const minDistance = this.playerShipRadius() + 0.9 * peer.group.scale.x;
       const offset = peer.group.position.clone().sub(this.player.position).setY(0);
@@ -585,24 +652,26 @@ export class Game {
       const distance = offset.length();
       if (distance > 0.001 && distance < 5.2) force.add(offset.normalize().multiplyScalar((5.2 - distance) / 5.2));
     }
-    const playerOffset = enemy.group.position.clone().sub(this.player.position).setY(0);
-    const playerDistance = playerOffset.length();
-    if (playerDistance > 0.001 && playerDistance < 2.6) force.add(playerOffset.normalize().multiplyScalar((2.6 - playerDistance) / 2.6));
+    if (this.isNetworkActive()) {
+      const playerOffset = enemy.group.position.clone().sub(this.player.position).setY(0);
+      const playerDistance = playerOffset.length();
+      if (playerDistance > 0.001 && playerDistance < 2.6) force.add(playerOffset.normalize().multiplyScalar((2.6 - playerDistance) / 2.6));
+    }
     return force;
   }
 
   private findAiTarget(enemy: ShipAi): THREE.Group {
+    const playerIsActive = this.isNetworkActive();
     const playerDistance = enemy.group.position.distanceTo(this.player.position);
     const healthyEnough = enemy.hp / enemy.maxHp > 0.42;
     const notTryingToUpgrade = !(enemy.coins >= 22 + enemy.rank * 10 || enemy.levelTimer <= 0);
-    if (playerDistance < 24 && healthyEnough && notTryingToUpgrade) return this.player;
+    if (playerIsActive && playerDistance < 24 && healthyEnough && notTryingToUpgrade) return this.player;
 
     const candidates = [
-      this.player,
-      ...this.allies.map((ally) => ally.group),
+      ...(playerIsActive ? [this.player, ...this.allies.map((ally) => ally.group)] : []),
       ...this.enemies.filter((other) => other !== enemy).map((other) => other.group),
     ];
-    let best = candidates[0];
+    let best = candidates[0] ?? enemy.group;
     let bestScore = Number.POSITIVE_INFINITY;
     for (const candidate of candidates) {
       const distance = candidate.position.distanceTo(enemy.group.position);
@@ -647,21 +716,10 @@ export class Game {
       } else {
         const enemyHit = this.enemies.find((enemy) => enemy.group !== ball.source && ball.mesh.position.distanceTo(enemy.group.position) < 1.35 * enemy.group.scale.x);
         if (enemyHit) { enemyHit.hp -= ball.damage; this.spawnDamageText(enemyHit.group.position, ball.damage, 'enemy'); this.makeSplash(ball.mesh.position, '#ffdd8a'); this.removeBall(i); if (enemyHit.hp <= 0) this.sinkEnemy(enemyHit, false, this.enemyNameForGroup(ball.source)); continue; }
-        if (ball.mesh.position.distanceTo(this.player.position) < 1.35 * this.player.scale.x) {
+        if (this.isNetworkActive() && ball.mesh.position.distanceTo(this.player.position) < 1.35 * this.player.scale.x) {
           this.hp -= ball.damage; this.audio.hit(); this.spawnDamageText(this.player.position, ball.damage, 'player'); this.makeSplash(this.player.position, '#e54b39'); this.removeBall(i); if (this.hp <= 0) this.playerKilledBy(this.enemyNameForGroup(ball.source)); continue;
         }
       }
-      if (ball.life <= 0 || Math.abs(ball.mesh.position.x) > SEA.halfWidth + 5 || Math.abs(ball.mesh.position.z) > SEA.halfDepth + 5) this.removeBall(i);
-    }
-  }
-
-  private updateRemoteProjectilesAsSpectator(delta: number): void {
-    for (let i = this.balls.length - 1; i >= 0; i -= 1) {
-      const ball = this.balls[i];
-      if (ball.owner !== 'remote') continue;
-      ball.life -= delta;
-      ball.mesh.position.addScaledVector(ball.velocity, delta);
-      ball.mesh.position.y = 0.55 + Math.sin((1 - ball.life) * Math.PI) * 0.85;
       if (ball.life <= 0 || Math.abs(ball.mesh.position.x) > SEA.halfWidth + 5 || Math.abs(ball.mesh.position.z) > SEA.halfDepth + 5) this.removeBall(i);
     }
   }
@@ -681,7 +739,7 @@ export class Game {
         }
       }
       if (!item.active) continue;
-      if (item.group.position.distanceTo(this.player.position) < 1.35) {
+      if (this.isNetworkActive() && item.group.position.distanceTo(this.player.position) < 1.35) {
         item.active = false; item.group.visible = false;
         if (item.kind === 'gold') { this.coins += item.value; this.audio.pickup(item.value); this.hud.flashPickup(); }
         else { this.hp = Math.min(this.maxHp(), this.hp + item.value); this.audio.upgrade(); }
@@ -891,7 +949,8 @@ export class Game {
   }
 
   private addAlly(): void {
-    const group = this.createShip('#9b6634', '#ded3b5', this.flagColor, 'raft');
+    const group = this.createShip('#9b6634', '#ded3b5', this.sailDesign.primaryColor, 'raft');
+    this.applySailDesign(group, this.sailDesign);
     const allyLevel = Math.max(1, Math.floor(this.hullLevel / 2));
     group.scale.setScalar(this.shipScaleForLevel(allyLevel)); group.position.copy(this.player.position).add(new THREE.Vector3(-2 - this.allies.length, 0, 2));
     this.applyShipUpgradeVisual(group, allyLevel);
@@ -911,7 +970,7 @@ export class Game {
     const point = points[Math.floor(Math.random() * points.length)];
       const group = new THREE.Group();
       const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.18, 0.35, 4, 8), new THREE.MeshStandardMaterial({ color: '#f2c08c', roughness: 0.7 }));
-    const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.35), new THREE.MeshBasicMaterial({ color: this.flagColor, side: THREE.DoubleSide }));
+    const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.35), new THREE.MeshBasicMaterial({ color: this.sailDesign.primaryColor, side: THREE.DoubleSide }));
     const price = new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.035, 8, 24), new THREE.MeshBasicMaterial({ color: '#f8d66d' }));
     flag.position.set(0.35, 0.95, 0);
     price.position.set(0, 0.08, 0);
@@ -958,17 +1017,219 @@ export class Game {
       const hull = new THREE.Mesh(new THREE.CapsuleGeometry(0.75, 1.85, 5, 14), hullMat); hull.scale.set(1, 0.42, 1.55); hull.rotation.x = Math.PI / 2; hull.position.y = 0.34;
       const deck = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.12, 1.85), deckMat); deck.position.y = 0.63; ship.add(hull, deck);
     }
-    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.065, 1.45, 8), deckMat); mast.name = 'base-mast'; mast.position.y = 1.2;
-    const sail = new THREE.Mesh(new THREE.PlaneGeometry(0.95, 0.72), new THREE.MeshStandardMaterial({ color: sailColor, roughness: 0.8, side: THREE.DoubleSide })); sail.name = 'base-sail'; sail.position.set(0, 1.22, -0.08); sail.rotation.y = Math.PI / 2;
-    const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.46, 0.28), new THREE.MeshBasicMaterial({ color: flagColor, side: THREE.DoubleSide })); flag.name = 'flag'; flag.position.set(0.02, 1.92, -0.1); flag.rotation.y = Math.PI / 2;
-    ship.add(mast, sail, flag);
+    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.065, 1.8, 8), deckMat);
+    mast.name = 'base-mast';
+    mast.position.set(0, 1.48, 0.12);
+    const boom = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.04, 1.12, 8), deckMat);
+    boom.name = 'sail-boom';
+    boom.position.set(0, 1.03, 0.09);
+    boom.rotation.z = Math.PI / 2;
+    const sail = new THREE.Mesh(
+      this.createSailGeometry(),
+      new THREE.MeshStandardMaterial({ color: sailColor, roughness: 0.78, side: THREE.DoubleSide }),
+    );
+    sail.name = 'custom-sail';
+    sail.position.set(0, 1.55, 0.08);
+    ship.add(mast, boom, sail, this.createCrewMember());
+    this.applySailDesign(ship, {
+      primaryPattern: flagColor === '#111111' ? 'skull' : 'anchor',
+      secondaryPattern: 'waves',
+      primaryColor: flagColor,
+      secondaryColor: flagColor === '#111111' ? '#b41f2d' : '#173f5f',
+    });
     ship.traverse((node) => { if (node instanceof THREE.Mesh) { node.castShadow = true; node.receiveShadow = true; } });
     return ship;
   }
 
-  private paintFlag(ship: THREE.Group, color: string): void {
-    const flag = ship.getObjectByName('flag') as THREE.Mesh | undefined;
-    if (flag?.material instanceof THREE.MeshBasicMaterial) flag.material.color.set(color);
+  private createSailGeometry(): THREE.BufferGeometry {
+    const geometry = new THREE.PlaneGeometry(1.24, 1.12, 6, 4);
+    const positions = geometry.attributes.position;
+    const uvs = geometry.attributes.uv;
+    for (let index = 0; index < positions.count; index += 1) {
+      const u = uvs.getX(index);
+      const v = uvs.getY(index);
+      const taper = 0.64 + (1 - v) * 0.36;
+      positions.setX(index, positions.getX(index) * taper);
+      positions.setZ(index, Math.sin(u * Math.PI) * Math.sin(v * Math.PI) * 0.09);
+    }
+    positions.needsUpdate = true;
+    geometry.computeVertexNormals();
+    return geometry;
+  }
+
+  private createCrewMember(): THREE.Group {
+    const crew = new THREE.Group();
+    crew.name = 'crew-member';
+    crew.position.set(-0.27, 0.93, 0.32);
+    const skin = new THREE.MeshStandardMaterial({ color: '#d9935f', roughness: 0.72 });
+    const shirt = new THREE.MeshStandardMaterial({ color: '#c43132', roughness: 0.68 });
+    const trousers = new THREE.MeshStandardMaterial({ color: '#173f5f', roughness: 0.72 });
+    const hatMaterial = new THREE.MeshStandardMaterial({ color: '#332115', roughness: 0.8 });
+    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.11, 0.22, 4, 8), shirt);
+    torso.position.y = 0.3;
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.115, 12, 9), skin);
+    head.position.y = 0.61;
+    const hat = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.19, 0.08, 12), hatMaterial);
+    hat.position.y = 0.72;
+    const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.23, 0.23, 0.035, 12), hatMaterial);
+    brim.position.y = 0.68;
+    const legs = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.24, 0.12), trousers);
+    legs.position.y = 0.08;
+    const armGeometry = new THREE.CapsuleGeometry(0.035, 0.2, 3, 6);
+    for (const x of [-0.14, 0.14]) {
+      const arm = new THREE.Mesh(armGeometry, skin);
+      arm.position.set(x, 0.32, 0);
+      arm.rotation.z = x < 0 ? -0.34 : 0.34;
+      crew.add(arm);
+    }
+    crew.add(legs, torso, head, brim, hat);
+    return crew;
+  }
+
+  private applySailDesign(ship: THREE.Group, design: SailDesign): void {
+    const sail = ship.getObjectByName('custom-sail') as THREE.Mesh | undefined;
+    if (!sail || !(sail.material instanceof THREE.MeshStandardMaterial)) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 256;
+    this.drawSailCanvas(canvas, design);
+    const previousMap = sail.material.map;
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    sail.material.map = texture;
+    sail.material.color.set('#ffffff');
+    sail.material.needsUpdate = true;
+    previousMap?.dispose();
+  }
+
+  private drawSailCanvas(canvas: HTMLCanvasElement, design: SailDesign): void {
+    const context = canvas.getContext('2d');
+    if (!context) return;
+    const scale = canvas.width / 256;
+    context.save();
+    context.scale(scale, scale);
+    context.clearRect(0, 0, 256, 256);
+    const parchment = context.createLinearGradient(0, 0, 256, 256);
+    parchment.addColorStop(0, '#fff6dc');
+    parchment.addColorStop(0.52, '#e8d5a9');
+    parchment.addColorStop(1, '#c5a875');
+    context.fillStyle = parchment;
+    context.fillRect(0, 0, 256, 256);
+    context.globalAlpha = 0.16;
+    context.strokeStyle = '#6f5432';
+    context.lineWidth = 1;
+    for (let y = 8; y < 256; y += 9) {
+      context.beginPath();
+      context.moveTo(0, y);
+      context.bezierCurveTo(70, y - 2, 180, y + 3, 256, y);
+      context.stroke();
+    }
+    context.globalAlpha = 1;
+    this.drawSecondarySailPattern(context, design.secondaryPattern, design.secondaryColor);
+    this.drawPrimarySailPattern(context, design.primaryPattern, design.primaryColor);
+    context.strokeStyle = '#73532e';
+    context.lineWidth = 8;
+    context.strokeRect(5, 5, 246, 246);
+    context.strokeStyle = 'rgba(255,255,255,0.46)';
+    context.lineWidth = 2;
+    context.strokeRect(11, 11, 234, 234);
+    context.restore();
+  }
+
+  private drawPrimarySailPattern(context: CanvasRenderingContext2D, pattern: PrimarySailPattern, color: string): void {
+    context.save();
+    context.translate(128, 112);
+    context.strokeStyle = color;
+    context.fillStyle = color;
+    context.lineCap = 'round';
+    context.lineJoin = 'round';
+    context.lineWidth = 13;
+    if (pattern === 'anchor') {
+      context.beginPath(); context.arc(0, -52, 17, 0, Math.PI * 2); context.stroke();
+      context.beginPath(); context.moveTo(0, -34); context.lineTo(0, 52); context.moveTo(-39, -9); context.lineTo(39, -9); context.stroke();
+      context.beginPath(); context.moveTo(-53, 25); context.quadraticCurveTo(-38, 66, 0, 68); context.quadraticCurveTo(38, 66, 53, 25); context.stroke();
+      context.beginPath(); context.moveTo(-53, 25); context.lineTo(-57, 49); context.lineTo(-36, 39); context.fill();
+      context.beginPath(); context.moveTo(53, 25); context.lineTo(57, 49); context.lineTo(36, 39); context.fill();
+    } else if (pattern === 'skull') {
+      context.beginPath(); context.arc(0, -8, 48, 0, Math.PI * 2); context.fill();
+      context.fillRect(-28, 25, 56, 38);
+      context.fillStyle = '#eadbb8';
+      context.beginPath(); context.arc(-18, -12, 11, 0, Math.PI * 2); context.arc(18, -12, 11, 0, Math.PI * 2); context.fill();
+      context.beginPath(); context.moveTo(0, 4); context.lineTo(-8, 20); context.lineTo(8, 20); context.fill();
+      context.strokeStyle = '#eadbb8'; context.lineWidth = 5;
+      for (const x of [-18, -6, 6, 18]) { context.beginPath(); context.moveTo(x, 36); context.lineTo(x, 60); context.stroke(); }
+      context.strokeStyle = color; context.lineWidth = 11;
+      context.beginPath(); context.moveTo(-61, 63); context.lineTo(61, 91); context.moveTo(61, 63); context.lineTo(-61, 91); context.stroke();
+    } else if (pattern === 'sun') {
+      context.beginPath(); context.arc(0, 0, 39, 0, Math.PI * 2); context.fill();
+      context.lineWidth = 10;
+      for (let index = 0; index < 12; index += 1) {
+        const angle = (index / 12) * Math.PI * 2;
+        context.beginPath(); context.moveTo(Math.cos(angle) * 54, Math.sin(angle) * 54); context.lineTo(Math.cos(angle) * 82, Math.sin(angle) * 82); context.stroke();
+      }
+    } else {
+      context.rotate(Math.PI / 4);
+      context.fillRect(-46, -46, 92, 92);
+      context.fillStyle = '#eadbb8';
+      context.rotate(-Math.PI / 4);
+      context.beginPath(); context.arc(0, 0, 30, 0, Math.PI * 2); context.fill();
+      context.fillStyle = color;
+      context.beginPath(); context.moveTo(0, -72); context.lineTo(14, -17); context.lineTo(0, -29); context.lineTo(-14, -17); context.closePath(); context.fill();
+      context.beginPath(); context.moveTo(0, 72); context.lineTo(14, 17); context.lineTo(0, 29); context.lineTo(-14, 17); context.closePath(); context.fill();
+      context.beginPath(); context.moveTo(-72, 0); context.lineTo(-17, 14); context.lineTo(-29, 0); context.lineTo(-17, -14); context.closePath(); context.fill();
+      context.beginPath(); context.moveTo(72, 0); context.lineTo(17, 14); context.lineTo(29, 0); context.lineTo(17, -14); context.closePath(); context.fill();
+    }
+    context.restore();
+  }
+
+  private drawSecondarySailPattern(context: CanvasRenderingContext2D, pattern: SecondarySailPattern, color: string): void {
+    context.save();
+    context.strokeStyle = color;
+    context.fillStyle = color;
+    context.globalAlpha = 0.78;
+    if (pattern === 'waves') {
+      context.lineWidth = 10;
+      for (const y of [184, 214]) {
+        context.beginPath();
+        for (let x = -24; x <= 280; x += 8) {
+          const waveY = y + Math.sin((x / 48) * Math.PI * 2) * 9;
+          if (x === -24) context.moveTo(x, waveY); else context.lineTo(x, waveY);
+        }
+        context.stroke();
+      }
+    } else if (pattern === 'stripes') {
+      context.lineWidth = 16;
+      for (let offset = -230; offset < 260; offset += 54) {
+        context.beginPath(); context.moveTo(offset, 256); context.lineTo(offset + 176, 0); context.stroke();
+      }
+    } else if (pattern === 'diamonds') {
+      for (const y of [48, 116, 184, 244]) for (const x of [34, 94, 154, 214]) {
+        context.save(); context.translate(x, y); context.rotate(Math.PI / 4); context.fillRect(-10, -10, 20, 20); context.restore();
+      }
+    } else {
+      context.font = 'bold 34px Georgia, serif';
+      context.textAlign = 'center';
+      context.textBaseline = 'middle';
+      for (const [x, y] of [[35, 40], [221, 42], [48, 132], [210, 139], [38, 220], [220, 222]] as const) context.fillText('✦', x, y);
+    }
+    context.restore();
+  }
+
+  private updateSailEditor(): void {
+    const menu = this.getElement('#sail-menu');
+    menu.querySelectorAll<HTMLButtonElement>('button[data-sail-layer]').forEach((button) => {
+      const selected = button.dataset.sailLayer === 'primary'
+        ? button.dataset.sailPattern === this.sailDesign.primaryPattern
+        : button.dataset.sailPattern === this.sailDesign.secondaryPattern;
+      button.classList.toggle('selected', selected);
+      button.setAttribute('aria-pressed', String(selected));
+    });
+    menu.querySelectorAll<HTMLInputElement>('input[data-sail-color]').forEach((input) => {
+      input.value = input.dataset.sailColor === 'primary' ? this.sailDesign.primaryColor : this.sailDesign.secondaryColor;
+    });
+    const preview = this.getElement('#sail-preview') as HTMLCanvasElement;
+    this.drawSailCanvas(preview, this.sailDesign);
+    for (const vessel of [this.player, ...this.allies.map((ally) => ally.group)]) this.applySailDesign(vessel, this.sailDesign);
   }
 
   private applyShipUpgradeVisual(ship: THREE.Group, level: number): void {
@@ -986,9 +1247,11 @@ export class Game {
     const runwayMat = new THREE.MeshStandardMaterial({ color: '#2f3438', roughness: 0.52, metalness: 0.2 });
     const levelClamped = Math.max(1, Math.min(12, Math.floor(level)));
     const baseMast = ship.getObjectByName('base-mast');
-    const baseSail = ship.getObjectByName('base-sail');
-    if (baseMast) baseMast.visible = false;
-    if (baseSail) baseSail.visible = false;
+    const baseSail = ship.getObjectByName('custom-sail');
+    const sailBoom = ship.getObjectByName('sail-boom');
+    if (baseMast) baseMast.visible = levelClamped < 10;
+    if (baseSail) baseSail.visible = levelClamped < 10;
+    if (sailBoom) sailBoom.visible = levelClamped < 10;
 
     if (levelClamped <= 2) {
       const logs = levelClamped === 1 ? [-0.18, 0.18] : [-0.42, -0.14, 0.14, 0.42];
