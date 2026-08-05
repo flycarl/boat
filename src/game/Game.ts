@@ -105,6 +105,7 @@ export class Game {
   private readonly killFeed = this.getElement('#kill-feed');
   private readonly mapEnemies = this.getElement('#map-enemies');
   private readonly mapIslands = this.getElement('#map-islands');
+  private readonly app = this.getElement('#app');
   private readonly remotePeers = new Map<string, RemotePeer>();
   private readonly clientId = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
   private readonly roomChannel: BroadcastChannel | null;
@@ -187,6 +188,7 @@ export class Game {
     this.audio.dispose();
     this.debugTools.dispose();
     this.renderer.dispose();
+    this.app.classList.remove('menu-open');
     window.__THREE_GAME_DIAGNOSTICS__ = undefined;
   }
 
@@ -320,6 +322,7 @@ export class Game {
     resizeRenderer(this.renderer, this.camera, this.tuning.maxDpr);
     this.updateMouseWorld();
     const playerActive = this.isNetworkActive();
+    this.app.classList.toggle('menu-open', !playerActive);
     if (playerActive) {
       this.elapsed += delta;
       this.dockCooldown = Math.max(0, this.dockCooldown - delta);
@@ -1089,6 +1092,9 @@ export class Game {
   private applySailDesign(ship: THREE.Group, design: SailDesign): void {
     const sail = ship.getObjectByName('custom-sail') as THREE.Mesh | undefined;
     if (!sail || !(sail.material instanceof THREE.MeshStandardMaterial)) return;
+    const designKey = `${design.primaryPattern}:${design.secondaryPattern}:${design.primaryColor}:${design.secondaryColor}`;
+    if (sail.userData.designKey === designKey) return;
+    sail.userData.designKey = designKey;
     const canvas = document.createElement('canvas');
     canvas.width = 256;
     canvas.height = 256;

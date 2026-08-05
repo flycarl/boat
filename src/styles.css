@@ -41,6 +41,11 @@ body {
   cursor: none;
 }
 
+#app.menu-open,
+#app.menu-open #game-canvas {
+  cursor: default;
+}
+
 #join-panel {
   position: absolute;
   inset: 0;
@@ -51,6 +56,7 @@ body {
   background:
     radial-gradient(circle at 50% 34%, rgba(68, 219, 232, 0.18), transparent 20rem),
     linear-gradient(180deg, rgba(5, 24, 38, 0.72), rgba(3, 12, 20, 0.9));
+  cursor: default;
 }
 
 #join-panel.hidden {
@@ -226,6 +232,7 @@ body {
 #overlay {
   position: absolute;
   inset: 0;
+  z-index: 12;
   display: grid;
   place-items: center;
   opacity: 0;
@@ -524,6 +531,11 @@ body {
   transform: translate(-50%, -50%);
   pointer-events: none;
   mix-blend-mode: screen;
+  transition: opacity 120ms ease;
+}
+
+#app.menu-open #crosshair {
+  opacity: 0;
 }
 
 #minimap {
