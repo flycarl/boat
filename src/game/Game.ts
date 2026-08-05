@@ -55,8 +55,9 @@ type RoomMessage = {
 };
 type KillMessage = { type: 'kill'; id: string; room: string; killer: string; victim: string };
 type ProjectileMessage = { type: 'projectile'; id: string; room: string; projectileId: string; shooterName: string; x: number; z: number; vx: number; vz: number; damage: number };
+type LootDropMessage = { type: 'loot-drop'; id: string; room: string; dropId: string; x: number; z: number; value: number };
 type PresenceMessage = { type: 'join' | 'leave'; id: string; room: string; name: string };
-type NetworkMessage = RoomMessage | KillMessage | ProjectileMessage | PresenceMessage;
+type NetworkMessage = RoomMessage | KillMessage | ProjectileMessage | LootDropMessage | PresenceMessage;
 type RemotePeer = {
   group: THREE.Group;
   targetPosition: THREE.Vector3;
@@ -292,6 +293,10 @@ export class Game {
       this.spawnRemoteProjectile(data);
       return;
     }
+    if (data.type === 'loot-drop') {
+      this.spawnLoot('gold', new THREE.Vector3(data.x, 0, data.z), data.value);
+      return;
+    }
     if (data.type === 'join') {
       this.showRoomNotice(`${data.name} 加入了房间`, 'join');
       return;
@@ -390,10 +395,8 @@ export class Game {
       this.updateLoot(delta, elapsedRaw);
       this.updateCastaways(delta);
       this.updateVfx(delta);
-      if (!this.gameOver) {
-        this.spawnTimer -= delta;
-        if (this.spawnTimer <= 0 && this.enemies.length < 8 + Math.min(this.wave, 6)) { this.spawnEnemy(); this.spawnTimer = Math.max(1.4, 4.2 - this.wave * 0.24); }
-      }
+      this.spawnTimer -= delta;
+      if (this.spawnTimer <= 0 && this.enemies.length < 8 + Math.min(this.wave, 6)) { this.spawnEnemy(); this.spawnTimer = Math.max(1.4, 4.2 - this.wave * 0.24); }
       if (this.kills >= this.wave * 4) this.wave += 1;
     }
     if (!playerActive) {
@@ -403,12 +406,10 @@ export class Game {
       this.updateBalls(delta);
       this.updateLoot(delta, elapsedRaw);
       this.updateVfx(delta);
-      if (!this.gameOver) {
-        this.spawnTimer -= delta;
-        if (this.spawnTimer <= 0 && this.enemies.length < 8 + Math.min(this.wave, 6)) {
-          this.spawnEnemy();
-          this.spawnTimer = Math.max(1.4, 4.2 - this.wave * 0.24);
-        }
+      this.spawnTimer -= delta;
+      if (this.spawnTimer <= 0 && this.enemies.length < 8 + Math.min(this.wave, 6)) {
+        this.spawnEnemy();
+        this.spawnTimer = Math.max(1.4, 4.2 - this.wave * 0.24);
       }
     }
     this.updateRoomSync(delta);
@@ -790,7 +791,7 @@ export class Game {
           item.active = false;
           item.group.visible = false;
           if (item.kind === 'gold') enemy.coins += item.value;
-          else enemy.hp = Math.min(enemy.maxHp, enemy.hp + item.value);
+          else enemy.hp = Math.min(enemy.maxHp, enemy.hp + enemy.maxHp * 0.5);
           this.makeSplash(item.group.position, item.kind === 'gold' ? '#f8d66d' : '#4dff88', 0.45);
         }
       }
@@ -798,7 +799,7 @@ export class Game {
       if (this.isNetworkActive() && item.group.position.distanceTo(this.player.position) < 1.35) {
         item.active = false; item.group.visible = false;
         if (item.kind === 'gold') { this.coins += item.value; this.audio.pickup(item.value); this.hud.flashPickup(); }
-        else { this.hp = Math.min(this.maxHp(), this.hp + item.value); this.audio.upgrade(); }
+        else { this.hp = Math.min(this.maxHp(), this.hp + this.maxHp() * 0.5); this.audio.upgrade(); }
       }
     }
     if (this.loot.filter((item) => item.active && item.kind === 'med').length < 3) this.spawnLoot('med');
@@ -926,7 +927,11 @@ export class Game {
 
   private sinkEnemy(enemy: ShipAi, rewardPlayer = true, killer = this.options.playerName): void {
     const wreckPosition = enemy.group.position.clone();
-    if (rewardPlayer) this.kills += 1;
+    const defeatedRank = enemy.rank;
+    if (rewardPlayer) {
+      this.kills += 1;
+      this.coins += 10 + defeatedRank * 8;
+    }
     this.broadcastKill(killer, enemy.name);
     const goldDrops = 2 + Math.min(4, Math.floor(enemy.rank / 3));
     for (let i = 0; i < goldDrops; i += 1) this.spawnLoot('gold', wreckPosition);
@@ -969,7 +974,28 @@ export class Game {
   private playerKilledBy(killer: string): void {
     if (this.gameOver) return;
     this.gameOver = true;
+    this.dropPlayerCoins();
     this.broadcastKill(killer, this.options.playerName);
+  }
+
+  private dropPlayerCoins(): void {
+    const total = Math.max(0, Math.floor(this.coins));
+    if (total <= 0) return;
+    const values = [Math.ceil(total / 2), Math.floor(total / 2)];
+    this.coins = 0;
+    values.forEach((value, index) => {
+      const dropId = `${this.clientId}-${performance.now()}-${index}`;
+      this.spawnLoot('gold', this.player.position, value);
+      this.sendNetworkMessage({
+        type: 'loot-drop',
+        id: this.clientId,
+        room: this.options.roomCode,
+        dropId,
+        x: this.player.position.x,
+        z: this.player.position.z,
+        value,
+      });
+    });
   }
 
   private broadcastKill(killer: string, victim: string): void {
@@ -1005,7 +1031,7 @@ export class Game {
     this.scene.add(group); this.enemies.push({ group, velocity: new THREE.Vector3(), hp: 45 + rank * 22, maxHp: 45 + rank * 22, cooldown: 0.8 + Math.random() * 1.6, collideCooldown: Math.random() * 0.3, seed: Math.random() * 100, rank, coins: Math.random() * 18, levelTimer: 7 + Math.random() * 8, name: names[Math.floor(Math.random() * names.length)] });
   }
 
-  private spawnLoot(kind: Loot['kind'], origin?: THREE.Vector3): void {
+  private spawnLoot(kind: Loot['kind'], origin?: THREE.Vector3, explicitValue?: number): void {
     const group = new THREE.Group();
     group.userData.lootKind = kind;
     if (kind === 'gold') {
@@ -1049,7 +1075,7 @@ export class Game {
     this.clampToSea(group.position, 2);
     this.pushPointOffIslands(group.position, 1.1);
     this.scene.add(group);
-    this.loot.push({ group, kind, value: kind === 'gold' ? 7 + Math.floor(Math.random() * 8) : 22, active: true, bob: Math.random() * 10 });
+    this.loot.push({ group, kind, value: explicitValue ?? (kind === 'gold' ? 7 + Math.floor(Math.random() * 8) : 22), active: true, bob: Math.random() * 10 });
   }
 
   private randomOpenWaterPosition(): THREE.Vector3 {
