@@ -78,7 +78,7 @@ type RoomMessage = {
   active: boolean;
 };
 type KillMessage = { type: 'kill'; id: string; room: string; killer: string; victim: string };
-type ProjectileMessage = { type: 'projectile'; id: string; room: string; projectileId: string; shooterName: string; x: number; z: number; vx: number; vz: number; damage: number };
+type ProjectileMessage = { type: 'projectile'; id: string; room: string; projectileId: string; shooterName: string; x: number; y?: number; z: number; vx: number; vz: number; damage: number };
 type LootDropMessage = { type: 'loot-drop'; id: string; room: string; dropId: string; x: number; z: number; value: number };
 type PresenceMessage = { type: 'join' | 'leave'; id: string; room: string; name: string };
 type EnemySnapshot = { id: string; name: string; x: number; z: number; y: number; rotation: number; rank: number; hp: number; maxHp: number; coins: number; seed: number };
@@ -418,7 +418,7 @@ export class Game {
       new THREE.MeshStandardMaterial({ color: '#020202', roughness: 0.34, metalness: 0.72 }),
     );
     mesh.castShadow = true;
-    mesh.position.set(data.x, 0.55, data.z);
+    mesh.position.set(data.x, data.y ?? 0.9, data.z);
     this.scene.add(mesh);
     this.balls.push({
       mesh,
@@ -1027,6 +1027,9 @@ export class Game {
   private fireInDirection(ship: THREE.Group, direction: THREE.Vector3, owner: Ball['owner'], damage: number, speed: number, color: string): void {
     const dir = direction.clone().setY(0).normalize();
     const start = ship.position.clone().add(dir.clone().multiplyScalar(1.15 * ship.scale.x));
+    const shipLevel = Math.max(1, Math.min(12, Number(ship.userData.visualLevel) || 1));
+    const cannonHeight = shipLevel >= 10 ? 1.08 : shipLevel >= 6 ? 1.15 : shipLevel >= 3 ? 0.93 : 0.9;
+    start.y += cannonHeight * ship.scale.y;
     const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.22, 18, 12), new THREE.MeshStandardMaterial({ color, roughness: 0.34, metalness: 0.72 }));
     mesh.castShadow = true; mesh.position.copy(start); this.scene.add(mesh);
     this.balls.push({ mesh, velocity: dir.multiplyScalar(speed), life: 1.55, owner, damage, source: ship });
@@ -1039,6 +1042,7 @@ export class Game {
         projectileId: `${this.clientId}-${performance.now()}`,
         shooterName: this.options.playerName,
         x: start.x,
+        y: start.y,
         z: start.z,
         vx: dir.x,
         vz: dir.z,
@@ -1645,6 +1649,7 @@ export class Game {
     const steelMat = new THREE.MeshStandardMaterial({ color: '#5d6870', roughness: 0.42, metalness: 0.45 });
     const runwayMat = new THREE.MeshStandardMaterial({ color: '#2f3438', roughness: 0.52, metalness: 0.2 });
     const levelClamped = Math.max(1, Math.min(12, Math.floor(level)));
+    ship.userData.visualLevel = levelClamped;
     const baseMast = ship.getObjectByName('base-mast');
     const baseSail = ship.getObjectByName('custom-sail');
     const sailBoom = ship.getObjectByName('sail-boom');
