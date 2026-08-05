@@ -9,6 +9,22 @@
   <body>
     <main id="app">
       <canvas id="game-canvas" aria-label="Playable Three.js game canvas"></canvas>
+      <form id="join-panel">
+        <div id="join-card">
+          <span class="eyebrow">MULTIPLAYER ROOM</span>
+          <h1>加入海战</h1>
+          <label>
+            名字
+            <input id="player-name-input" name="playerName" maxlength="14" placeholder="船长名字" autocomplete="nickname" required />
+          </label>
+          <label>
+            四位数房间号
+            <input id="room-code-input" name="roomCode" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" placeholder="例如 1234" required />
+          </label>
+          <button id="join-button" type="submit">进入房间</button>
+          <p>同一房间号会进入同一场海战。</p>
+        </div>
+      </form>
       <section id="hud" aria-live="polite">
         <div id="level-banner">Level <span id="level-value">1</span></div>
         <div class="hud-panel captain">

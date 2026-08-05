@@ -7,7 +7,7 @@ import { CameraRig } from '../systems/CameraRig';
 import { DebugTools, type DebugTuning } from '../systems/DebugTools';
 import { Hud, type HudState } from '../systems/Hud';
 
-const SEA = { halfWidth: 38, halfDepth: 27 };
+const SEA = { halfWidth: 48, halfDepth: 34 };
 const UPGRADE_ISLAND = new THREE.Vector3(-23, 0, -14);
 const UPGRADE_DOCK = new THREE.Vector3(-17.2, 0, -14);
 const MAX_START_AMMO = 10;
@@ -24,6 +24,20 @@ type ShipAi = { group: THREE.Group; velocity: THREE.Vector3; hp: number; maxHp: 
 type Ally = { group: THREE.Group; velocity: THREE.Vector3; cooldown: number; offset: THREE.Vector3 };
 type Castaway = { group: THREE.Group; dock: THREE.Vector3; rescued: boolean; cost: number };
 type FloatingText = { element: HTMLElement; position: THREE.Vector3; life: number; maxLife: number; lift: number };
+export type GameOptions = { playerName: string; roomCode: string };
+type RoomMessage = {
+  id: string;
+  room: string;
+  name: string;
+  x: number;
+  z: number;
+  rotation: number;
+  hullLevel: number;
+  hp: number;
+  maxHp: number;
+  flagColor: string;
+};
+type RemotePeer = { group: THREE.Group; name: string; hp: number; maxHp: number; hullLevel: number; lastSeen: number };
 
 export class Game {
   private readonly renderer: THREE.WebGLRenderer;
@@ -55,6 +69,10 @@ export class Game {
   private readonly nameplates = this.getElement('#nameplates');
   private readonly floatingTextsLayer = this.getElement('#floating-texts');
   private readonly mapEnemies = this.getElement('#map-enemies');
+  private readonly remotePeers = new Map<string, RemotePeer>();
+  private readonly clientId = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+  private readonly roomChannel: BroadcastChannel | null;
+  private networkTimer = 0;
   private flagColor = '#e54b39';
   private frame = 0;
   private coins = 0;
@@ -89,8 +107,10 @@ export class Game {
     return 0.82 + Math.max(1, Math.min(12, Math.floor(level))) * 0.08;
   }
 
-  constructor(private readonly canvas: HTMLCanvasElement) {
+  constructor(private readonly canvas: HTMLCanvasElement, private readonly options: GameOptions) {
     this.renderer = createRenderer(canvas);
+    this.roomChannel = 'BroadcastChannel' in window ? new BroadcastChannel(`boat-room-${options.roomCode}`) : null;
+    this.roomChannel?.addEventListener('message', this.onRoomMessage);
     this.renderer.toneMappingExposure = this.tuning.exposure;
     this.input = new InputController(this.getElement('#touch-stick'), this.getElement('#touch-knob'), this.getElement('#dash-button'));
     this.debugTools = new DebugTools(this.tuning, () => resizeRenderer(this.renderer, this.camera, this.tuning.maxDpr));
@@ -120,6 +140,8 @@ export class Game {
   dispose(): void {
     this.loop.stop();
     window.removeEventListener('keydown', this.onKeyDown);
+    this.roomChannel?.removeEventListener('message', this.onRoomMessage);
+    this.roomChannel?.close();
     this.input.dispose();
     this.audio.dispose();
     this.debugTools.dispose();
@@ -151,6 +173,32 @@ export class Game {
     for (const ship of [this.player, ...this.allies.map((ally) => ally.group)]) this.paintFlag(ship, this.flagColor);
   };
 
+  private readonly onRoomMessage = (event: MessageEvent<RoomMessage>) => {
+    const data = event.data;
+    if (!data || data.id === this.clientId || data.room !== this.options.roomCode) return;
+    let peer = this.remotePeers.get(data.id);
+    if (!peer) {
+      const group = this.createShip('#7d4d28', '#ded3b5', data.flagColor, 'raft');
+      group.scale.setScalar(this.shipScaleForLevel(data.hullLevel));
+      this.applyShipUpgradeVisual(group, data.hullLevel);
+      this.scene.add(group);
+      peer = { group, name: data.name, hp: data.hp, maxHp: data.maxHp, hullLevel: data.hullLevel, lastSeen: performance.now() };
+      this.remotePeers.set(data.id, peer);
+    }
+    peer.name = data.name;
+    peer.hp = data.hp;
+    peer.maxHp = data.maxHp;
+    peer.lastSeen = performance.now();
+    if (peer.hullLevel !== data.hullLevel) {
+      peer.hullLevel = data.hullLevel;
+      peer.group.scale.setScalar(this.shipScaleForLevel(data.hullLevel));
+      this.applyShipUpgradeVisual(peer.group, data.hullLevel);
+    }
+    this.paintFlag(peer.group, data.flagColor);
+    peer.group.position.lerp(new THREE.Vector3(data.x, 0, data.z), 0.55);
+    peer.group.rotation.y = data.rotation;
+  };
+
   private update(deltaRaw: number, elapsedRaw: number): void {
     const delta = Math.min(deltaRaw, 0.05);
     this.frame += 1;
@@ -172,6 +220,7 @@ export class Game {
       if (this.spawnTimer <= 0 && this.enemies.length < 8 + Math.min(this.wave, 6)) { this.spawnEnemy(); this.spawnTimer = Math.max(1.4, 4.2 - this.wave * 0.24); }
       if (this.kills >= this.wave * 4) this.wave += 1;
     }
+    this.updateRoomSync(delta);
     this.updateFloatingTexts(delta);
     this.updateGuidance();
     this.updateNameplates();
@@ -181,6 +230,32 @@ export class Game {
     this.cameraRig.update(delta, this.player.position, this.tuning.cameraLag);
     this.hud.update(this.getHudState());
     this.publishDiagnostics();
+  }
+
+  private updateRoomSync(delta: number): void {
+    this.networkTimer -= delta;
+    if (this.roomChannel && this.networkTimer <= 0) {
+      this.roomChannel.postMessage({
+        id: this.clientId,
+        room: this.options.roomCode,
+        name: this.options.playerName,
+        x: this.player.position.x,
+        z: this.player.position.z,
+        rotation: this.player.rotation.y,
+        hullLevel: this.hullLevel,
+        hp: this.hp,
+        maxHp: this.maxHp(),
+        flagColor: this.flagColor,
+      } satisfies RoomMessage);
+      this.networkTimer = 0.08;
+    }
+    const now = performance.now();
+    for (const [id, peer] of this.remotePeers) {
+      if (now - peer.lastSeen > 3500) {
+        this.scene.remove(peer.group);
+        this.remotePeers.delete(id);
+      }
+    }
   }
 
   private render(): void { this.renderer.render(this.scene, this.camera); }
@@ -1009,7 +1084,8 @@ export class Game {
       return;
     }
     const entries: Array<{ label: string; position: THREE.Vector3; hp: number; maxHp: number; kind: string }> = [
-      { label: `YOU Lv.${this.hullLevel}`, position: this.player.position, hp: this.hp, maxHp: this.maxHp(), kind: 'player' },
+      { label: `${this.options.playerName} Lv.${this.hullLevel}`, position: this.player.position, hp: this.hp, maxHp: this.maxHp(), kind: 'player' },
+      ...[...this.remotePeers.values()].map((peer) => ({ label: `${peer.name} Lv.${peer.hullLevel}`, position: peer.group.position, hp: peer.hp, maxHp: peer.maxHp, kind: 'player' })),
       ...this.enemies.map((enemy) => ({ label: `${enemy.name} Lv.${enemy.rank}`, position: enemy.group.position, hp: enemy.hp, maxHp: enemy.maxHp, kind: 'enemy' })),
       ...this.allies.map((ally, index) => ({ label: `ALLY ${index + 1}`, position: ally.group.position, hp: 1, maxHp: 1, kind: 'ally' })),
     ];

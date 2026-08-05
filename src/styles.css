@@ -41,6 +41,70 @@ body {
   cursor: none;
 }
 
+#join-panel {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background:
+    radial-gradient(circle at 50% 34%, rgba(68, 219, 232, 0.18), transparent 20rem),
+    linear-gradient(180deg, rgba(5, 24, 38, 0.72), rgba(3, 12, 20, 0.9));
+}
+
+#join-panel.hidden {
+  display: none;
+}
+
+#join-card {
+  width: min(430px, calc(100vw - 32px));
+  padding: 26px;
+  border: 1px solid rgba(255, 244, 214, 0.32);
+  background: linear-gradient(180deg, rgba(8, 52, 70, 0.94), rgba(5, 20, 31, 0.92));
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+}
+
+#join-card h1 {
+  margin: 6px 0 18px;
+  color: #ffe986;
+}
+
+#join-card label {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0;
+  color: rgba(255, 244, 214, 0.82);
+  font-weight: 800;
+}
+
+#join-card input {
+  min-height: 44px;
+  border: 1px solid rgba(255, 244, 214, 0.34);
+  border-radius: 0;
+  padding: 0 12px;
+  color: #fff4d6;
+  background: rgba(0, 0, 0, 0.28);
+  font: inherit;
+  font-size: 1.05rem;
+}
+
+#join-button {
+  width: 100%;
+  min-height: 48px;
+  margin-top: 12px;
+  border: 1px solid rgba(255, 244, 214, 0.42);
+  color: #071620;
+  background: linear-gradient(180deg, #ffe986, #ffb33e);
+  font-weight: 950;
+  cursor: pointer;
+}
+
+#join-card p {
+  margin: 14px 0 0;
+  color: rgba(255, 244, 214, 0.68);
+}
+
 #hud {
   position: absolute;
   top: max(14px, env(safe-area-inset-top));
