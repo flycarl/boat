@@ -7,7 +7,7 @@ import { CameraRig } from '../systems/CameraRig';
 import { DebugTools, type DebugTuning } from '../systems/DebugTools';
 import { Hud, type HudState } from '../systems/Hud';
 
-const SEA = { halfWidth: 48, halfDepth: 34 };
+const SEA = { halfWidth: 64, halfDepth: 46 };
 const UPGRADE_ISLAND = new THREE.Vector3(-23, 0, -14);
 const UPGRADE_DOCK = new THREE.Vector3(-17.2, 0, -14);
 const MAX_START_AMMO = 10;
@@ -18,7 +18,7 @@ const ISLAND_COLLIDERS = [
   { center: new THREE.Vector3(21, 0, -10), radius: 3.0 },
 ];
 
-type Ball = { mesh: THREE.Mesh; velocity: THREE.Vector3; life: number; owner: 'player' | 'enemy' | 'ally'; damage: number; source: THREE.Group };
+type Ball = { mesh: THREE.Mesh; velocity: THREE.Vector3; life: number; owner: 'player' | 'enemy' | 'ally' | 'remote'; damage: number; source: THREE.Group; killerName?: string };
 type Loot = { group: THREE.Group; kind: 'gold' | 'med'; value: number; active: boolean; bob: number };
 type ShipAi = { group: THREE.Group; velocity: THREE.Vector3; hp: number; maxHp: number; cooldown: number; collideCooldown: number; seed: number; rank: number; coins: number; levelTimer: number; name: string };
 type Ally = { group: THREE.Group; velocity: THREE.Vector3; cooldown: number; offset: THREE.Vector3 };
@@ -37,10 +37,22 @@ type RoomMessage = {
   hp: number;
   maxHp: number;
   flagColor: string;
+  active: boolean;
 };
 type KillMessage = { type: 'kill'; id: string; room: string; killer: string; victim: string };
-type NetworkMessage = RoomMessage | KillMessage;
-type RemotePeer = { group: THREE.Group; name: string; hp: number; maxHp: number; hullLevel: number; lastSeen: number };
+type ProjectileMessage = { type: 'projectile'; id: string; room: string; projectileId: string; shooterName: string; x: number; z: number; vx: number; vz: number; damage: number };
+type NetworkMessage = RoomMessage | KillMessage | ProjectileMessage;
+type RemotePeer = {
+  group: THREE.Group;
+  targetPosition: THREE.Vector3;
+  targetRotation: number;
+  name: string;
+  hp: number;
+  maxHp: number;
+  hullLevel: number;
+  lastSeen: number;
+  collideCooldown: number;
+};
 
 export class Game {
   private readonly renderer: THREE.WebGLRenderer;
@@ -204,27 +216,65 @@ export class Game {
       this.showKillFeed(data.killer, data.victim);
       return;
     }
+    if (data.type === 'projectile') {
+      this.spawnRemoteProjectile(data);
+      return;
+    }
     let peer = this.remotePeers.get(data.id);
     if (!peer) {
       const group = this.createShip('#7d4d28', '#ded3b5', data.flagColor, 'raft');
+      group.position.set(data.x, 0, data.z);
+      group.rotation.y = data.rotation;
       group.scale.setScalar(this.shipScaleForLevel(data.hullLevel));
       this.applyShipUpgradeVisual(group, data.hullLevel);
       this.scene.add(group);
-      peer = { group, name: data.name, hp: data.hp, maxHp: data.maxHp, hullLevel: data.hullLevel, lastSeen: performance.now() };
+      peer = {
+        group,
+        targetPosition: new THREE.Vector3(data.x, 0, data.z),
+        targetRotation: data.rotation,
+        name: data.name,
+        hp: data.hp,
+        maxHp: data.maxHp,
+        hullLevel: data.hullLevel,
+        lastSeen: performance.now(),
+        collideCooldown: 0,
+      };
       this.remotePeers.set(data.id, peer);
     }
     peer.name = data.name;
     peer.hp = data.hp;
     peer.maxHp = data.maxHp;
     peer.lastSeen = performance.now();
+    peer.targetPosition.set(data.x, 0, data.z);
+    peer.targetRotation = data.rotation;
+    peer.group.visible = data.active !== false;
     if (peer.hullLevel !== data.hullLevel) {
       peer.hullLevel = data.hullLevel;
       peer.group.scale.setScalar(this.shipScaleForLevel(data.hullLevel));
       this.applyShipUpgradeVisual(peer.group, data.hullLevel);
     }
     this.paintFlag(peer.group, data.flagColor);
-    peer.group.position.lerp(new THREE.Vector3(data.x, 0, data.z), 0.55);
-    peer.group.rotation.y = data.rotation;
+  }
+
+  private spawnRemoteProjectile(data: ProjectileMessage): void {
+    const source = this.remotePeers.get(data.id)?.group ?? new THREE.Group();
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(0.22, 18, 12),
+      new THREE.MeshStandardMaterial({ color: '#020202', roughness: 0.34, metalness: 0.72 }),
+    );
+    mesh.castShadow = true;
+    mesh.position.set(data.x, 0.55, data.z);
+    this.scene.add(mesh);
+    this.balls.push({
+      mesh,
+      velocity: new THREE.Vector3(data.vx, 0, data.vz),
+      life: 1.55,
+      owner: 'remote',
+      damage: data.damage,
+      source,
+      killerName: data.shooterName,
+    });
+    this.makeMuzzlePuff(mesh.position, '#fff1b5');
   }
 
   private update(deltaRaw: number, elapsedRaw: number): void {
@@ -232,7 +282,8 @@ export class Game {
     this.frame += 1;
     resizeRenderer(this.renderer, this.camera, this.tuning.maxDpr);
     this.updateMouseWorld();
-    if (!this.paused && !this.upgradeOpen && !this.sailorOpen && !this.gameOver) {
+    const playerActive = this.isNetworkActive();
+    if (playerActive) {
       this.elapsed += delta;
       this.dockCooldown = Math.max(0, this.dockCooldown - delta);
       if (this.input.consumeReload()) this.startReload();
@@ -248,6 +299,7 @@ export class Game {
       if (this.spawnTimer <= 0 && this.enemies.length < 8 + Math.min(this.wave, 6)) { this.spawnEnemy(); this.spawnTimer = Math.max(1.4, 4.2 - this.wave * 0.24); }
       if (this.kills >= this.wave * 4) this.wave += 1;
     }
+    if (!playerActive) this.updateRemoteProjectilesAsSpectator(delta);
     this.updateRoomSync(delta);
     this.updateFloatingTexts(delta);
     this.updateGuidance();
@@ -255,7 +307,8 @@ export class Game {
     this.nameplates.classList.toggle('hidden', this.paused || this.gameOver || this.upgradeOpen || this.sailorOpen);
     this.updateUpgradeOverlay();
     this.updateSailorOverlay();
-    this.cameraRig.update(delta, this.player.position, this.tuning.cameraLag);
+    if (playerActive) this.cameraRig.update(delta, this.player.position, this.tuning.cameraLag);
+    else this.cameraRig.updateOverview(delta);
     this.hud.update(this.getHudState());
     this.publishDiagnostics();
   }
@@ -275,16 +328,32 @@ export class Game {
         hp: this.hp,
         maxHp: this.maxHp(),
         flagColor: this.flagColor,
+        active: this.isNetworkActive(),
       } satisfies RoomMessage);
       this.networkTimer = 0.08;
     }
     const now = performance.now();
     for (const [id, peer] of this.remotePeers) {
+      peer.collideCooldown = Math.max(0, peer.collideCooldown - delta);
       if (now - peer.lastSeen > 3500) {
         this.scene.remove(peer.group);
         this.remotePeers.delete(id);
+        continue;
       }
+      const positionSmoothing = 1 - Math.exp(-12 * delta);
+      const rotationSmoothing = 1 - Math.exp(-14 * delta);
+      peer.group.position.lerp(peer.targetPosition, positionSmoothing);
+      peer.group.rotation.y = this.lerpAngle(peer.group.rotation.y, peer.targetRotation, rotationSmoothing);
     }
+  }
+
+  private isNetworkActive(): boolean {
+    return !this.paused && !this.upgradeOpen && !this.sailorOpen && !this.gameOver;
+  }
+
+  private lerpAngle(from: number, to: number, alpha: number): number {
+    const delta = Math.atan2(Math.sin(to - from), Math.cos(to - from));
+    return from + delta * alpha;
   }
 
   private sendNetworkMessage(message: NetworkMessage): void {
@@ -440,6 +509,27 @@ export class Game {
       }
     }
 
+    for (const peer of this.remotePeers.values()) {
+      if (!peer.group.visible) continue;
+      const minDistance = this.playerShipRadius() + 0.9 * peer.group.scale.x;
+      const offset = peer.group.position.clone().sub(this.player.position).setY(0);
+      const distance = offset.length();
+      if (distance <= 0.001 || distance >= minDistance) continue;
+      const normal = offset.normalize();
+      const push = (minDistance - distance) * 0.65 + 0.22;
+      this.player.position.addScaledVector(normal, -push);
+      this.playerVelocity.addScaledVector(normal, -4.2);
+      if (this.playerCollideCooldown <= 0 && peer.collideCooldown <= 0) {
+        this.hp -= 10;
+        this.playerCollideCooldown = 0.72;
+        peer.collideCooldown = 0.72;
+        this.spawnDamageText(this.player.position, 10, 'player');
+        this.makeSplash(this.player.position.clone().lerp(peer.group.position, 0.5), '#ffffff', 0.48);
+        this.audio.hit();
+        if (this.hp <= 0) this.playerKilledBy(peer.name);
+      }
+    }
+
     for (let i = 0; i < this.enemies.length; i += 1) {
       for (let j = i + 1; j < this.enemies.length; j += 1) {
         const a = this.enemies[i];
@@ -530,7 +620,17 @@ export class Game {
     for (let i = this.balls.length - 1; i >= 0; i -= 1) {
       const ball = this.balls[i];
       ball.life -= delta; ball.mesh.position.addScaledVector(ball.velocity, delta); ball.mesh.position.y = 0.55 + Math.sin((1 - ball.life) * Math.PI) * 0.85;
-      if (ball.owner !== 'enemy') {
+      if (ball.owner === 'remote') {
+        if (this.isNetworkActive() && ball.mesh.position.distanceTo(this.player.position) < 1.35 * this.player.scale.x) {
+          this.hp -= ball.damage;
+          this.audio.hit();
+          this.spawnDamageText(this.player.position, ball.damage, 'player');
+          this.makeSplash(this.player.position, '#e54b39');
+          this.removeBall(i);
+          if (this.hp <= 0) this.playerKilledBy(ball.killerName ?? '其他玩家');
+          continue;
+        }
+      } else if (ball.owner !== 'enemy') {
         const hit = this.enemies.find((enemy) => ball.mesh.position.distanceTo(enemy.group.position) < 1.35 * enemy.group.scale.x);
         if (hit) { hit.hp -= ball.damage; this.spawnDamageText(hit.group.position, ball.damage, 'enemy'); this.makeSplash(ball.mesh.position, '#f8d66d'); this.removeBall(i); if (hit.hp <= 0) this.sinkEnemy(hit, true, this.options.playerName); continue; }
       } else {
@@ -540,6 +640,17 @@ export class Game {
           this.hp -= ball.damage; this.audio.hit(); this.spawnDamageText(this.player.position, ball.damage, 'player'); this.makeSplash(this.player.position, '#e54b39'); this.removeBall(i); if (this.hp <= 0) this.playerKilledBy(this.enemyNameForGroup(ball.source)); continue;
         }
       }
+      if (ball.life <= 0 || Math.abs(ball.mesh.position.x) > SEA.halfWidth + 5 || Math.abs(ball.mesh.position.z) > SEA.halfDepth + 5) this.removeBall(i);
+    }
+  }
+
+  private updateRemoteProjectilesAsSpectator(delta: number): void {
+    for (let i = this.balls.length - 1; i >= 0; i -= 1) {
+      const ball = this.balls[i];
+      if (ball.owner !== 'remote') continue;
+      ball.life -= delta;
+      ball.mesh.position.addScaledVector(ball.velocity, delta);
+      ball.mesh.position.y = 0.55 + Math.sin((1 - ball.life) * Math.PI) * 0.85;
       if (ball.life <= 0 || Math.abs(ball.mesh.position.x) > SEA.halfWidth + 5 || Math.abs(ball.mesh.position.z) > SEA.halfDepth + 5) this.removeBall(i);
     }
   }
@@ -603,6 +714,20 @@ export class Game {
     mesh.castShadow = true; mesh.position.copy(start); this.scene.add(mesh);
     this.balls.push({ mesh, velocity: dir.multiplyScalar(speed), life: 1.55, owner, damage, source: ship });
     this.makeMuzzlePuff(start, owner === 'enemy' ? '#ff705c' : '#fff1b5');
+    if (owner === 'player') {
+      this.sendNetworkMessage({
+        type: 'projectile',
+        id: this.clientId,
+        room: this.options.roomCode,
+        projectileId: `${this.clientId}-${performance.now()}`,
+        shooterName: this.options.playerName,
+        x: start.x,
+        z: start.z,
+        vx: dir.x,
+        vz: dir.z,
+        damage,
+      });
+    }
   }
 
   private leaveDock(): void {
@@ -1002,7 +1127,7 @@ export class Game {
   }
 
   private createOcean(): THREE.Mesh {
-    const texture = this.createWaterTexture(); texture.wrapS = THREE.RepeatWrapping; texture.wrapT = THREE.RepeatWrapping; texture.repeat.set(4, 3);
+    const texture = this.createWaterTexture(); texture.wrapS = THREE.RepeatWrapping; texture.wrapT = THREE.RepeatWrapping; texture.repeat.set(5.35, 4.05);
     const ocean = new THREE.Mesh(new THREE.PlaneGeometry(SEA.halfWidth * 2.5, SEA.halfDepth * 2.5, 64, 64), new THREE.MeshStandardMaterial({ color: '#22c7dc', map: texture, roughness: 0.46, metalness: 0.01 }));
     ocean.rotation.x = -Math.PI / 2; ocean.receiveShadow = true; return ocean;
   }
@@ -1147,7 +1272,7 @@ export class Game {
     }
     const entries: Array<{ label: string; position: THREE.Vector3; hp: number; maxHp: number; kind: string }> = [
       { label: `${this.options.playerName} Lv.${this.hullLevel}`, position: this.player.position, hp: this.hp, maxHp: this.maxHp(), kind: 'player' },
-      ...[...this.remotePeers.values()].map((peer) => ({ label: `${peer.name} Lv.${peer.hullLevel}`, position: peer.group.position, hp: peer.hp, maxHp: peer.maxHp, kind: 'player' })),
+      ...[...this.remotePeers.values()].filter((peer) => peer.group.visible).map((peer) => ({ label: `${peer.name} Lv.${peer.hullLevel}`, position: peer.group.position, hp: peer.hp, maxHp: peer.maxHp, kind: 'player' })),
       ...this.enemies.map((enemy) => ({ label: `${enemy.name} Lv.${enemy.rank}`, position: enemy.group.position, hp: enemy.hp, maxHp: enemy.maxHp, kind: 'enemy' })),
       ...this.allies.map((ally, index) => ({ label: `ALLY ${index + 1}`, position: ally.group.position, hp: 1, maxHp: 1, kind: 'ally' })),
     ];
