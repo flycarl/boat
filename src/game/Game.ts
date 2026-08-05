@@ -154,6 +154,7 @@ export class Game {
 
   constructor(private readonly canvas: HTMLCanvasElement, private readonly options: GameOptions) {
     this.renderer = createRenderer(canvas);
+    this.getElement('#pause-room-code strong').textContent = options.roomCode;
     this.roomChannel = 'BroadcastChannel' in window ? new BroadcastChannel(`boat-room-${options.roomCode}`) : null;
     this.roomChannel?.addEventListener('message', this.onRoomMessage);
     this.socket = this.createSocket();

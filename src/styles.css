@@ -269,6 +269,25 @@ body {
   font-size: 2rem;
 }
 
+#pause-room-code {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 9px;
+  margin: 0 0 10px;
+  padding: 7px 11px;
+  border: 1px solid rgba(75, 184, 255, 0.52);
+  color: rgba(255, 244, 214, 0.78);
+  background: rgba(75, 184, 255, 0.12);
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+}
+
+#pause-room-code strong {
+  color: #73d4ff;
+  font-size: 1.2rem;
+  letter-spacing: 0.18em;
+}
+
 #pause-card h2 {
   margin: 20px 0 10px;
   font-size: 1rem;
