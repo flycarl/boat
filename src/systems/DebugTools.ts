@@ -11,8 +11,8 @@ export class DebugTools {
   private gui: GUI | null = null;
 
   constructor(tuning: DebugTuning, onChange: () => void) {
-    const enabled = new URLSearchParams(window.location.search).has('debug');
-    if (!enabled) return;
+    const debugMode = new URLSearchParams(window.location.search).get('debug');
+    if (debugMode === null || debugMode === 'bridge') return;
 
     this.gui = new GUI({ title: 'Game tuning' });
     this.gui.add(tuning, 'speed', 2, 14, 0.1);

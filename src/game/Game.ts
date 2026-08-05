@@ -7,6 +7,7 @@ import { AudioSystem } from '../systems/AudioSystem';
 import { CameraRig } from '../systems/CameraRig';
 import { DebugTools, type DebugTuning } from '../systems/DebugTools';
 import { Hud, type HudState } from '../systems/Hud';
+import { disposeObject3D } from '../utils/dispose';
 
 const SEA = { halfWidth: 64, halfDepth: 46 };
 const UPGRADE_ISLAND = new THREE.Vector3(-23, 0, -14);
@@ -53,7 +54,8 @@ type RoomMessage = {
 };
 type KillMessage = { type: 'kill'; id: string; room: string; killer: string; victim: string };
 type ProjectileMessage = { type: 'projectile'; id: string; room: string; projectileId: string; shooterName: string; x: number; z: number; vx: number; vz: number; damage: number };
-type NetworkMessage = RoomMessage | KillMessage | ProjectileMessage;
+type PresenceMessage = { type: 'leave'; id: string; room: string; name: string };
+type NetworkMessage = RoomMessage | KillMessage | ProjectileMessage | PresenceMessage;
 type RemotePeer = {
   group: THREE.Group;
   targetPosition: THREE.Vector3;
@@ -111,6 +113,7 @@ export class Game {
   private readonly roomChannel: BroadcastChannel | null;
   private readonly socket: WebSocket | null;
   private networkTimer = 0;
+  private leavingRoom = false;
   private frame = 0;
   private coins = 0;
   private kills = 0;
@@ -144,6 +147,11 @@ export class Game {
     return 0.82 + Math.max(1, Math.min(12, Math.floor(level))) * 0.08;
   }
 
+  private cameraScaleForLevel(level: number): number {
+    const progress = (Math.max(1, Math.min(12, Math.floor(level))) - 1) / 11;
+    return THREE.MathUtils.lerp(0.72, 1.3, progress);
+  }
+
   constructor(private readonly canvas: HTMLCanvasElement, private readonly options: GameOptions) {
     this.renderer = createRenderer(canvas);
     this.roomChannel = 'BroadcastChannel' in window ? new BroadcastChannel(`boat-room-${options.roomCode}`) : null;
@@ -174,6 +182,7 @@ export class Game {
     this.createMinimapIslands();
     this.createScene();
     this.restart();
+    this.installDebugBridge();
   }
 
   start(): void { this.loop.start(); }
@@ -190,6 +199,19 @@ export class Game {
     this.renderer.dispose();
     this.app.classList.remove('menu-open');
     window.__THREE_GAME_DIAGNOSTICS__ = undefined;
+    window.__BOAT_DEBUG__ = undefined;
+  }
+
+  private installDebugBridge(): void {
+    if (!new URLSearchParams(window.location.search).has('debug')) return;
+    window.__BOAT_DEBUG__ = {
+      setHullLevel: (level: number) => {
+        this.hullLevel = Math.max(1, Math.min(12, Math.floor(level)));
+        this.hp = this.maxHp();
+        this.resizeFleet();
+        this.cameraRig.snapTo(this.player.position, this.cameraScaleForLevel(this.hullLevel));
+      },
+    };
   }
 
   private readonly onKeyDown = (event: KeyboardEvent) => {
@@ -253,6 +275,15 @@ export class Game {
       this.spawnRemoteProjectile(data);
       return;
     }
+    if (data.type === 'leave') {
+      const peer = this.remotePeers.get(data.id);
+      if (peer) {
+        this.scene.remove(peer.group);
+        this.remotePeers.delete(data.id);
+        this.showRoomNotice(`${data.name} 退出了房间`, 'leave');
+      }
+      return;
+    }
     let peer = this.remotePeers.get(data.id);
     if (!peer) {
       const group = this.createShip('#7d4d28', '#ded3b5', data.flagColor, 'raft');
@@ -273,6 +304,7 @@ export class Game {
         collideCooldown: 0,
       };
       this.remotePeers.set(data.id, peer);
+      this.showRoomNotice(`${data.name} 加入了房间`, 'join');
     }
     peer.name = data.name;
     peer.hp = data.hp;
@@ -364,7 +396,7 @@ export class Game {
       fog.near = THREE.MathUtils.lerp(fog.near, playerActive ? 46 : 112, fogBlend);
       fog.far = THREE.MathUtils.lerp(fog.far, playerActive ? 104 : 238, fogBlend);
     }
-    if (playerActive) this.cameraRig.update(delta, this.player.position, this.tuning.cameraLag);
+    if (playerActive) this.cameraRig.update(delta, this.player.position, this.tuning.cameraLag, this.cameraScaleForLevel(this.hullLevel));
     else this.cameraRig.updateOverview(delta);
     this.hud.update(this.getHudState());
     this.publishDiagnostics();
@@ -412,22 +444,14 @@ export class Game {
   }
 
   private quitRoom(): void {
+    if (this.leavingRoom) return;
+    this.leavingRoom = true;
+    this.loop.stop();
     this.sendNetworkMessage({
-      type: 'state',
+      type: 'leave',
       id: this.clientId,
       room: this.options.roomCode,
       name: this.options.playerName,
-      x: this.player.position.x,
-      z: this.player.position.z,
-      rotation: this.player.rotation.y,
-      hullLevel: this.hullLevel,
-      hp: this.hp,
-      maxHp: this.maxHp(),
-      flagColor: this.sailDesign.primaryColor,
-      sailPrimaryPattern: this.sailDesign.primaryPattern,
-      sailSecondaryPattern: this.sailDesign.secondaryPattern,
-      sailSecondaryColor: this.sailDesign.secondaryColor,
-      active: false,
     });
     window.setTimeout(() => window.location.reload(), 60);
   }
@@ -462,7 +486,7 @@ export class Game {
     for (let i = 0; i < 6; i += 1) this.spawnLoot('med');
     for (let i = 0; i < 7; i += 1) this.spawnEnemy();
     this.createCastaways();
-    this.cameraRig.snapTo(this.player.position);
+    this.cameraRig.snapTo(this.player.position, this.cameraScaleForLevel(this.hullLevel));
   }
 
   private createScene(): void {
@@ -905,6 +929,15 @@ export class Game {
     while (this.killFeed.children.length > 5) this.killFeed.lastElementChild?.remove();
   }
 
+  private showRoomNotice(message: string, kind: 'join' | 'leave'): void {
+    const item = document.createElement('div');
+    item.className = `kill-message room-notice ${kind}`;
+    item.textContent = message;
+    this.killFeed.prepend(item);
+    window.setTimeout(() => item.remove(), 4800);
+    while (this.killFeed.children.length > 5) this.killFeed.lastElementChild?.remove();
+  }
+
   private spawnEnemy(): void {
     const rank = Math.min(12, Math.max(1, Math.floor(this.roomDifficultyLevel() * 0.65) + Math.floor(this.wave / 2) + THREE.MathUtils.randInt(-1, 2)));
     const angle = Math.random() * Math.PI * 2;
@@ -1032,6 +1065,7 @@ export class Game {
       new THREE.MeshStandardMaterial({ color: sailColor, roughness: 0.78, side: THREE.DoubleSide }),
     );
     sail.name = 'custom-sail';
+    sail.userData.sailSurface = true;
     sail.position.set(0, 1.55, 0.08);
     ship.add(mast, boom, sail, this.createCrewMember());
     this.applySailDesign(ship, {
@@ -1044,8 +1078,8 @@ export class Game {
     return ship;
   }
 
-  private createSailGeometry(): THREE.BufferGeometry {
-    const geometry = new THREE.PlaneGeometry(1.24, 1.12, 6, 4);
+  private createSailGeometry(width = 1.24, height = 1.12): THREE.BufferGeometry {
+    const geometry = new THREE.PlaneGeometry(width, height, 6, 4);
     const positions = geometry.attributes.position;
     const uvs = geometry.attributes.uv;
     for (let index = 0; index < positions.count; index += 1) {
@@ -1054,6 +1088,21 @@ export class Game {
       const taper = 0.64 + (1 - v) * 0.36;
       positions.setX(index, positions.getX(index) * taper);
       positions.setZ(index, Math.sin(u * Math.PI) * Math.sin(v * Math.PI) * 0.09);
+    }
+    positions.needsUpdate = true;
+    geometry.computeVertexNormals();
+    return geometry;
+  }
+
+  private createFlagGeometry(width = 1.5, height = 0.82): THREE.BufferGeometry {
+    const geometry = new THREE.PlaneGeometry(width, height, 8, 4);
+    geometry.translate(width * 0.5, 0, 0);
+    const positions = geometry.attributes.position;
+    const uvs = geometry.attributes.uv;
+    for (let index = 0; index < positions.count; index += 1) {
+      const u = uvs.getX(index);
+      const v = uvs.getY(index);
+      positions.setZ(index, Math.sin(u * Math.PI * 2) * (0.025 + u * 0.08) * Math.sin(v * Math.PI));
     }
     positions.needsUpdate = true;
     geometry.computeVertexNormals();
@@ -1090,22 +1139,32 @@ export class Game {
   }
 
   private applySailDesign(ship: THREE.Group, design: SailDesign): void {
-    const sail = ship.getObjectByName('custom-sail') as THREE.Mesh | undefined;
-    if (!sail || !(sail.material instanceof THREE.MeshStandardMaterial)) return;
+    ship.userData.sailDesign = { ...design };
+    const surfaces: THREE.Mesh[] = [];
+    ship.traverse((node) => {
+      if (node instanceof THREE.Mesh && node.userData.sailSurface === true && node.material instanceof THREE.MeshStandardMaterial) surfaces.push(node);
+    });
+    if (surfaces.length === 0) return;
     const designKey = `${design.primaryPattern}:${design.secondaryPattern}:${design.primaryColor}:${design.secondaryColor}`;
-    if (sail.userData.designKey === designKey) return;
-    sail.userData.designKey = designKey;
-    const canvas = document.createElement('canvas');
-    canvas.width = 256;
-    canvas.height = 256;
-    this.drawSailCanvas(canvas, design);
-    const previousMap = sail.material.map;
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.colorSpace = THREE.SRGBColorSpace;
-    sail.material.map = texture;
-    sail.material.color.set('#ffffff');
-    sail.material.needsUpdate = true;
-    previousMap?.dispose();
+    const previousTexture = ship.userData.sailTexture as THREE.Texture | undefined;
+    let texture = previousTexture;
+    if (!texture || ship.userData.sailDesignKey !== designKey) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 256;
+      canvas.height = 256;
+      this.drawSailCanvas(canvas, design);
+      texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      ship.userData.sailTexture = texture;
+      ship.userData.sailDesignKey = designKey;
+    }
+    for (const surface of surfaces) {
+      const material = surface.material as THREE.MeshStandardMaterial;
+      material.map = texture;
+      material.color.set('#ffffff');
+      material.needsUpdate = true;
+    }
+    if (previousTexture && previousTexture !== texture) previousTexture.dispose();
   }
 
   private drawSailCanvas(canvas: HTMLCanvasElement, design: SailDesign): void {
@@ -1240,7 +1299,15 @@ export class Game {
 
   private applyShipUpgradeVisual(ship: THREE.Group, level: number): void {
     const previous = ship.getObjectByName('upgrade-kit');
-    if (previous) ship.remove(previous);
+    if (previous) {
+      const sharedSailTexture = ship.userData.sailTexture as THREE.Texture | undefined;
+      previous.traverse((node) => {
+        if (!(node instanceof THREE.Mesh) || node.userData.sailSurface !== true || !(node.material instanceof THREE.MeshStandardMaterial)) return;
+        if (node.material.map === sharedSailTexture) node.material.map = null;
+      });
+      ship.remove(previous);
+      disposeObject3D(previous);
+    }
     const baseHull = ship.getObjectByName('base-hull');
     if (baseHull) baseHull.visible = false;
     const kit = new THREE.Group();
@@ -1328,10 +1395,14 @@ export class Game {
       frontMast.position.set(0, 1.74, -0.55);
       const rearMast = frontMast.clone();
       rearMast.position.z = 0.45;
-      const sailA = new THREE.Mesh(new THREE.PlaneGeometry(0.95, 0.65), new THREE.MeshStandardMaterial({ color: '#fff2d0', roughness: 0.8, side: THREE.DoubleSide }));
+      const sailA = new THREE.Mesh(this.createSailGeometry(0.95, 0.65), new THREE.MeshStandardMaterial({ color: '#fff2d0', roughness: 0.8, side: THREE.DoubleSide }));
+      sailA.name = 'custom-sail-front';
+      sailA.userData.sailSurface = true;
       sailA.position.set(0, 1.72, -0.55);
       sailA.rotation.y = 0;
       const sailB = sailA.clone();
+      sailB.name = 'custom-sail-rear';
+      sailB.userData.sailSurface = true;
       sailB.position.z = 0.45;
       kit.add(hull, bow, stern, deck, frontMast, rearMast, sailA, sailB);
       for (const [x, z] of [[-0.74, -0.65], [0.74, -0.65], [-0.74, 0.18], [0.74, 0.18], [-0.74, 0.82], [0.74, 0.82]] as const) {
@@ -1350,7 +1421,9 @@ export class Game {
       if (levelClamped >= 9) {
         const thirdMast = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.055, 1.5, 8), deckMat);
         thirdMast.position.set(0, 1.68, 1.05);
-        const sailC = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.55), new THREE.MeshStandardMaterial({ color: '#ffe7a8', roughness: 0.8, side: THREE.DoubleSide }));
+        const sailC = new THREE.Mesh(this.createSailGeometry(0.8, 0.55), new THREE.MeshStandardMaterial({ color: '#ffe7a8', roughness: 0.8, side: THREE.DoubleSide }));
+        sailC.name = 'custom-sail-third';
+        sailC.userData.sailSurface = true;
         sailC.position.set(0, 1.68, 1.05);
         sailC.rotation.y = 0;
         kit.add(thirdMast, sailC);
@@ -1370,7 +1443,16 @@ export class Game {
       runwayLine.position.set(0, 1.055, -0.1);
       const sternDeck = new THREE.Mesh(new THREE.BoxGeometry(1.35, 0.12, 0.56), steelMat);
       sternDeck.position.set(0, 1.16, 1.55);
-      kit.add(carrier, bow, runway, island, runwayLine, sternDeck);
+      const flagMast = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.055, 1.8, 10), steelMat);
+      flagMast.position.set(-0.62, 1.92, 0.28);
+      const carrierFlag = new THREE.Mesh(
+        this.createFlagGeometry(1.5, 0.82),
+        new THREE.MeshStandardMaterial({ color: '#fff2d0', roughness: 0.72, side: THREE.DoubleSide }),
+      );
+      carrierFlag.name = 'carrier-custom-flag';
+      carrierFlag.userData.sailSurface = true;
+      carrierFlag.position.set(-0.62, 2.28, 0.28);
+      kit.add(carrier, bow, runway, island, runwayLine, sternDeck, flagMast, carrierFlag);
       if (levelClamped >= 11) {
         for (const [x, z] of [[-0.35, -0.8], [0.32, 0.45]] as const) {
           const jet = new THREE.Group();
@@ -1410,6 +1492,8 @@ export class Game {
       kit.add(cannon);
     }
     ship.add(kit);
+    const design = ship.userData.sailDesign as SailDesign | undefined;
+    if (design) this.applySailDesign(ship, design);
   }
 
   private createWorldProps(): THREE.Group {
@@ -1481,14 +1565,16 @@ export class Game {
 
   private updateGuidance(): void {
     const canBuy = this.coins >= this.minUpgradeCost();
-    this.routeLine.visible = canBuy;
+    this.routeLine.visible = true;
     this.islandMarker.visible = true;
-    if (canBuy) this.routeLine.geometry.setFromPoints([this.player.position.clone().setY(0.12), UPGRADE_ISLAND.clone().setY(0.12)]);
+    this.routeLine.geometry.setFromPoints([this.player.position.clone().setY(0.12), UPGRADE_ISLAND.clone().setY(0.12)]);
+    const routeMaterial = this.routeLine.material;
+    if (routeMaterial instanceof THREE.LineBasicMaterial) routeMaterial.opacity = canBuy ? 0.95 : 0.42;
     const player = this.getElement('#map-player'); const island = this.getElement('#map-upgrade'); const line = this.getElement('#map-line');
     const px = ((this.player.position.x / SEA.halfWidth) * 0.5 + 0.5) * 100; const py = ((this.player.position.z / SEA.halfDepth) * 0.5 + 0.5) * 100;
     const ix = ((UPGRADE_ISLAND.x / SEA.halfWidth) * 0.5 + 0.5) * 100; const iy = ((UPGRADE_ISLAND.z / SEA.halfDepth) * 0.5 + 0.5) * 100;
     player.style.left = `${px}%`; player.style.top = `${py}%`; island.style.left = `${ix}%`; island.style.top = `${iy}%`;
-    const dx = ix - px; const dy = iy - py; line.style.left = `${px}%`; line.style.top = `${py}%`; line.style.width = `${Math.hypot(dx, dy)}%`; line.style.transform = `rotate(${Math.atan2(dy, dx)}rad)`; line.style.display = canBuy ? 'block' : 'none';
+    const dx = ix - px; const dy = iy - py; line.style.left = `${px}%`; line.style.top = `${py}%`; line.style.width = `${Math.hypot(dx, dy)}%`; line.style.transform = `rotate(${Math.atan2(dy, dx)}rad)`; line.style.display = 'block'; line.style.opacity = canBuy ? '1' : '0.45';
     this.mapEnemies.replaceChildren(...this.enemies.map((enemy) => {
       const dot = document.createElement('i');
       dot.className = 'map-enemy';
@@ -1694,7 +1780,56 @@ export class Game {
 
   private publishDiagnostics(): void {
     const info = this.renderer.info;
-    window.__THREE_GAME_DIAGNOSTICS__ = { frame: this.frame, elapsed: this.elapsed, wave: this.wave, coins: this.coins, kills: this.kills, gameOver: this.gameOver, paused: this.paused, entities: { enemies: this.enemies.length, cannonBalls: this.balls.length, crates: this.loot.filter((item) => item.active).length, vfx: this.vfx.length }, player: { hp: this.hp, position: { x: this.player.position.x, y: this.player.position.y, z: this.player.position.z }, speed: this.playerVelocity.length() }, renderer: { calls: info.render.calls, triangles: info.render.triangles, geometries: info.memory.geometries, textures: info.memory.textures }, canvas: { clientWidth: this.canvas.clientWidth, clientHeight: this.canvas.clientHeight, width: this.canvas.width, height: this.canvas.height, dpr: Math.min(window.devicePixelRatio || 1, this.tuning.maxDpr) } };
+    const sailSurfaces: THREE.Object3D[] = [];
+    const sailTextures = new Set<THREE.Texture>();
+    this.player.traverse((node) => {
+      if (node instanceof THREE.Mesh && node.userData.sailSurface === true && node.visible && node.parent?.visible !== false) {
+        sailSurfaces.push(node);
+        if (node.material instanceof THREE.MeshStandardMaterial && node.material.map) sailTextures.add(node.material.map);
+      }
+    });
+    window.__THREE_GAME_DIAGNOSTICS__ = {
+      frame: this.frame,
+      elapsed: this.elapsed,
+      wave: this.wave,
+      coins: this.coins,
+      kills: this.kills,
+      gameOver: this.gameOver,
+      paused: this.paused,
+      entities: {
+        enemies: this.enemies.length,
+        cannonBalls: this.balls.length,
+        crates: this.loot.filter((item) => item.active).length,
+        vfx: this.vfx.length,
+      },
+      player: {
+        hp: this.hp,
+        hullLevel: this.hullLevel,
+        position: { x: this.player.position.x, y: this.player.position.y, z: this.player.position.z },
+        speed: this.playerVelocity.length(),
+        sailSurfaces: sailSurfaces.length,
+        sailTextures: sailTextures.size,
+        carrierFlag: Boolean(this.player.getObjectByName('carrier-custom-flag')),
+      },
+      camera: {
+        distance: this.camera.position.distanceTo(this.player.position),
+        fov: this.camera.fov,
+        viewScale: this.cameraScaleForLevel(this.hullLevel),
+      },
+      renderer: {
+        calls: info.render.calls,
+        triangles: info.render.triangles,
+        geometries: info.memory.geometries,
+        textures: info.memory.textures,
+      },
+      canvas: {
+        clientWidth: this.canvas.clientWidth,
+        clientHeight: this.canvas.clientHeight,
+        width: this.canvas.width,
+        height: this.canvas.height,
+        dpr: Math.min(window.devicePixelRatio || 1, this.tuning.maxDpr),
+      },
+    };
   }
 
   private getElement(selector: string): HTMLElement {

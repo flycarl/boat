@@ -648,6 +648,16 @@ body {
   text-shadow: 0 2px 5px rgba(0, 0, 0, 0.75);
 }
 
+.room-notice.join {
+  border-left-color: #42ff7d;
+  color: #caffd9;
+}
+
+.room-notice.leave {
+  border-left-color: #f8d66d;
+  color: #fff0b8;
+}
+
 .damage-float {
   position: absolute;
   transform: translate(-50%, -50%);

@@ -16,8 +16,17 @@ interface ThreeGameDiagnostics {
   };
   player: {
     hp: number;
+    hullLevel: number;
     position: { x: number; y: number; z: number };
     speed: number;
+    sailSurfaces: number;
+    sailTextures: number;
+    carrierFlag: boolean;
+  };
+  camera: {
+    distance: number;
+    fov: number;
+    viewScale: number;
   };
   renderer: {
     calls: number;
@@ -36,4 +45,7 @@ interface ThreeGameDiagnostics {
 
 interface Window {
   __THREE_GAME_DIAGNOSTICS__?: ThreeGameDiagnostics;
+  __BOAT_DEBUG__?: {
+    setHullLevel: (level: number) => void;
+  };
 }

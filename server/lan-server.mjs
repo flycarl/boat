@@ -37,6 +37,14 @@ const server = createServer(async (req, res) => {
 const wss = new WebSocketServer({ server, path: '/ws' });
 const rooms = new Map();
 
+const broadcastToRoom = (room, message, except) => {
+  for (const client of wss.clients) {
+    if (client !== except && client.readyState === 1 && client.room === room) {
+      client.send(JSON.stringify(message));
+    }
+  }
+};
+
 wss.on('connection', (socket) => {
   socket.on('message', (raw) => {
     let message;
@@ -48,16 +56,22 @@ wss.on('connection', (socket) => {
     if (!message?.room) return;
     socket.room = message.room;
     socket.id = message.id;
+    socket.name = message.name ?? socket.name;
     if (!rooms.has(message.room)) rooms.set(message.room, new Map());
-    rooms.get(message.room).set(message.id, message);
-    for (const client of wss.clients) {
-      if (client !== socket && client.readyState === 1 && client.room === message.room) {
-        client.send(JSON.stringify(message));
-      }
+    if (message.type === 'leave') {
+      socket.didLeave = true;
+      rooms.get(message.room).delete(message.id);
+    } else {
+      rooms.get(message.room).set(message.id, message);
     }
+    broadcastToRoom(message.room, message, socket);
   });
   socket.on('close', () => {
-    if (socket.room && socket.id) rooms.get(socket.room)?.delete(socket.id);
+    if (!socket.room || !socket.id) return;
+    rooms.get(socket.room)?.delete(socket.id);
+    if (!socket.didLeave) {
+      broadcastToRoom(socket.room, { type: 'leave', id: socket.id, room: socket.room, name: socket.name ?? '玩家' }, socket);
+    }
   });
 });
 
