@@ -1130,7 +1130,7 @@ export class Game {
       this.coins += 10 + defeatedRank * 8;
     }
     this.broadcastKill(killer, enemy.name);
-    const dropValues = [Math.ceil(defeatedCoins / 2), Math.floor(defeatedCoins / 2)];
+    const dropValues = this.coinDropValues(defeatedCoins);
     for (const value of dropValues) this.spawnLoot('gold', wreckPosition, value);
     if (Math.random() < 0.35) this.spawnLoot('med', wreckPosition);
     this.makeSplash(wreckPosition, '#f8d66d', 1.1);
@@ -1174,7 +1174,7 @@ export class Game {
 
   private dropPlayerCoins(): void {
     const total = Math.max(0, Math.floor(this.coins));
-    const values = [Math.ceil(total / 2), Math.floor(total / 2)];
+    const values = this.coinDropValues(total);
     this.coins = 0;
     values.forEach((value, index) => {
       const dropId = `${this.clientId}-${performance.now()}-${index}`;
@@ -1189,6 +1189,14 @@ export class Game {
         value,
       });
     });
+  }
+
+  private coinDropValues(total: number): number[] {
+    const whole = Math.max(0, Math.floor(total));
+    const values = Array.from({ length: Math.floor(whole / 10) }, () => 10);
+    const remainder = whole % 10;
+    if (remainder > 0) values.push(remainder);
+    return values;
   }
 
   private broadcastKill(killer: string, victim: string): void {
@@ -1237,40 +1245,6 @@ export class Game {
       coins: Math.random() * 18,
       levelTimer: 7 + Math.random() * 8,
       name: names[Math.floor(Math.random() * names.length)],
-    });
-  }
-
-  private createEnemyFromSnapshot(snapshot: EnemySnapshot): ShipAi {
-    const group = this.createShip('#7d4d28', '#ded3b5', '#111111', 'raft');
-    group.position.set(snapshot.x, snapshot.y, snapshot.z);
-    group.rotation.y = snapshot.rotation;
-    group.scale.setScalar(this.shipScaleForLevel(snapshot.rank));
-    this.applyShipUpgradeVisual(group, snapshot.rank);
-    this.applyEnemySailDesign(group);
-    return {
-      id: snapshot.id,
-      group,
-      velocity: new THREE.Vector3(),
-      targetPosition: group.position.clone(),
-      targetRotation: snapshot.rotation,
-      hp: snapshot.hp,
-      maxHp: snapshot.maxHp,
-      cooldown: 0,
-      collideCooldown: 0,
-      seed: snapshot.seed,
-      rank: snapshot.rank,
-      coins: snapshot.coins,
-      levelTimer: 0,
-      name: snapshot.name,
-    };
-  }
-
-  private applyEnemySailDesign(group: THREE.Group): void {
-    this.applySailDesign(group, {
-      primaryPattern: 'skull',
-      secondaryPattern: 'waves',
-      primaryColor: '#111111',
-      secondaryColor: '#7d4d28',
     });
   }
 
