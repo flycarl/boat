@@ -500,17 +500,17 @@ body {
   padding: 0;
   border: 0;
   border-radius: 50%;
-  color: #6b4000;
-  opacity: 0.34;
-  background: #ffd85a;
-  box-shadow: 0 0 13px rgba(255, 216, 90, 0.5);
+  color: rgba(255, 255, 255, 0.18);
+  opacity: 0.035;
+  background: rgba(255, 255, 255, 0.2);
+  box-shadow: none;
   cursor: pointer;
 }
 
 #secret-coin-button.unlocked { display: block; }
 
 #secret-coin-button:hover,
-#secret-coin-button:focus-visible { opacity: 0.72; }
+#secret-coin-button:focus-visible { opacity: 0.16; }
 
 #restart-button,
 #resume-button,

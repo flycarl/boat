@@ -144,6 +144,7 @@ export class Game {
   private readonly mapIslands = this.getElement('#map-islands');
   private readonly app = this.getElement('#app');
   private readonly remotePeers = new Map<string, RemotePeer>();
+  private readonly pickedLootIds = new Set<string>();
   private readonly clientId: string = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
   private readonly roomChannel: BroadcastChannel | null;
   private readonly socket: WebSocket | null;
@@ -1196,7 +1197,7 @@ export class Game {
         this.removeBall(i);
         continue;
       }
-      if (this.boss && this.isEnemyAuthority() && ball.mesh.position.distanceTo(this.boss.group.position) < 3.1) {
+      if (this.boss && this.isEnemyAuthority() && this.horizontalDistance(ball.mesh.position, this.boss.group.position) < 3.1) {
         const hitPosition = this.boss.group.position.clone();
         const contributorId = ball.owner === 'remote' ? ball.shooterId : ball.owner === 'player' ? this.clientId : undefined;
         this.damageBoss(ball.damage, contributorId);
@@ -1207,10 +1208,10 @@ export class Game {
       }
       if (ball.owner === 'remote') {
         if (this.isEnemyAuthority()) {
-          const hit = this.enemies.find((enemy) => ball.mesh.position.distanceTo(enemy.group.position) < 1.35 * enemy.group.scale.x);
+          const hit = this.enemies.find((enemy) => this.horizontalDistance(ball.mesh.position, enemy.group.position) < 1.35 * enemy.group.scale.x);
           if (hit) { hit.hp -= ball.damage; this.spawnDamageText(hit.group.position, ball.damage, 'enemy'); this.makeSplash(ball.mesh.position, '#f8d66d'); this.removeBall(i); if (hit.hp <= 0) this.sinkEnemy(hit, false, ball.killerName ?? '其他玩家'); continue; }
         }
-        if (this.isNetworkActive() && ball.mesh.position.distanceTo(this.player.position) < 1.35 * this.player.scale.x) {
+        if (this.isNetworkActive() && this.horizontalDistance(ball.mesh.position, this.player.position) < 1.35 * this.player.scale.x) {
           this.hp -= ball.damage;
           this.audio.hit();
           this.spawnDamageText(this.player.position, ball.damage, 'player');
@@ -1221,15 +1222,15 @@ export class Game {
         }
       } else if (ball.owner !== 'enemy') {
         if (this.isEnemyAuthority()) {
-          const hit = this.enemies.find((enemy) => ball.mesh.position.distanceTo(enemy.group.position) < 1.35 * enemy.group.scale.x);
+          const hit = this.enemies.find((enemy) => this.horizontalDistance(ball.mesh.position, enemy.group.position) < 1.35 * enemy.group.scale.x);
           if (hit) { hit.hp -= ball.damage; this.spawnDamageText(hit.group.position, ball.damage, 'enemy'); this.makeSplash(ball.mesh.position, '#f8d66d'); this.removeBall(i); if (hit.hp <= 0) this.sinkEnemy(hit, true, this.options.playerName); continue; }
         }
       } else {
         if (this.isEnemyAuthority()) {
-          const enemyHit = this.enemies.find((enemy) => enemy.group !== ball.source && ball.mesh.position.distanceTo(enemy.group.position) < 1.35 * enemy.group.scale.x);
+          const enemyHit = this.enemies.find((enemy) => enemy.group !== ball.source && this.horizontalDistance(ball.mesh.position, enemy.group.position) < 1.35 * enemy.group.scale.x);
           if (enemyHit) { enemyHit.hp -= ball.damage; this.spawnDamageText(enemyHit.group.position, ball.damage, 'enemy'); this.makeSplash(ball.mesh.position, '#ffdd8a'); this.removeBall(i); if (enemyHit.hp <= 0) this.sinkEnemy(enemyHit, false, this.enemyNameForGroup(ball.source)); continue; }
         }
-        if (this.isNetworkActive() && ball.mesh.position.distanceTo(this.player.position) < 1.35 * this.player.scale.x) {
+        if (this.isNetworkActive() && this.horizontalDistance(ball.mesh.position, this.player.position) < 1.35 * this.player.scale.x) {
           this.hp -= ball.damage; this.audio.hit(); this.spawnDamageText(this.player.position, ball.damage, 'player'); this.makeSplash(this.player.position, '#e54b39'); this.removeBall(i); if (this.hp <= 0) this.playerKilledBy(this.enemyNameForGroup(ball.source)); continue;
         }
       }
@@ -1268,6 +1269,7 @@ export class Game {
   }
 
   private markLootPickedUp(dropId: string): void {
+    this.pickedLootIds.add(dropId);
     const item = this.loot.find((candidate) => candidate.id === dropId);
     if (!item) return;
     item.active = false;
@@ -1455,14 +1457,17 @@ export class Game {
     this.coins = 0;
     values.forEach((value, index) => {
       const dropId = `${this.clientId}-${performance.now()}-${index}`;
-      this.spawnLoot('gold', this.player.position, value, dropId);
+      const dropPosition = this.player.position.clone().add(new THREE.Vector3(THREE.MathUtils.randFloatSpread(4), 0, THREE.MathUtils.randFloatSpread(4)));
+      this.clampToSea(dropPosition, 2);
+      this.pushPointOffIslands(dropPosition, 1.1);
+      this.spawnLoot('gold', dropPosition, value, dropId);
       this.sendNetworkMessage({
         type: 'loot-drop',
         id: this.clientId,
         room: this.options.roomCode,
         dropId,
-        x: this.player.position.x,
-        z: this.player.position.z,
+        x: dropPosition.x,
+        z: dropPosition.z,
         value,
       });
     });
@@ -1526,6 +1531,7 @@ export class Game {
   }
 
   private spawnLoot(kind: Loot['kind'], origin?: THREE.Vector3, explicitValue?: number, explicitId?: string): void {
+    if (explicitId && this.pickedLootIds.has(explicitId)) return;
     if (explicitId && this.loot.some((item) => item.id === explicitId)) return;
     const group = new THREE.Group();
     group.userData.lootKind = kind;
@@ -1566,7 +1572,7 @@ export class Game {
       group.add(body, bandA, bandB);
     }
     group.position.copy(origin ?? this.randomOpenWaterPosition());
-    if (origin) group.position.add(new THREE.Vector3(THREE.MathUtils.randFloatSpread(4), 0, THREE.MathUtils.randFloatSpread(4)));
+    if (origin && !explicitId) group.position.add(new THREE.Vector3(THREE.MathUtils.randFloatSpread(4), 0, THREE.MathUtils.randFloatSpread(4)));
     this.clampToSea(group.position, 2);
     this.pushPointOffIslands(group.position, 1.1);
     this.scene.add(group);
@@ -1594,6 +1600,10 @@ export class Game {
 
   private isProjectileOnIsland(point: THREE.Vector3): boolean {
     return ISLAND_COLLIDERS.some((island) => point.distanceTo(island.center) < island.radius + 0.12);
+  }
+
+  private horizontalDistance(a: THREE.Vector3, b: THREE.Vector3): number {
+    return Math.hypot(a.x - b.x, a.z - b.z);
   }
 
   private addAlly(): void {
@@ -1908,7 +1918,7 @@ export class Game {
     this.drawSailCanvas(preview, this.sailDesign);
     for (const vessel of [this.player, ...this.allies.map((ally) => ally.group)]) this.applySailDesign(vessel, this.sailDesign);
     const secretButton = this.getElement('#secret-coin-button') as HTMLButtonElement;
-    const secretUnlocked = this.sailDesign.primaryPattern === 'compass' && this.sailDesign.secondaryPattern === 'waves';
+    const secretUnlocked = this.sailDesign.primaryPattern === 'compass' && this.sailDesign.secondaryPattern === 'stripes';
     secretButton.classList.toggle('unlocked', secretUnlocked);
     secretButton.disabled = !secretUnlocked;
     secretButton.setAttribute('aria-hidden', String(!secretUnlocked));
