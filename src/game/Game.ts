@@ -1907,6 +1907,11 @@ export class Game {
     const preview = this.getElement('#sail-preview') as HTMLCanvasElement;
     this.drawSailCanvas(preview, this.sailDesign);
     for (const vessel of [this.player, ...this.allies.map((ally) => ally.group)]) this.applySailDesign(vessel, this.sailDesign);
+    const secretButton = this.getElement('#secret-coin-button') as HTMLButtonElement;
+    const secretUnlocked = this.sailDesign.primaryPattern === 'compass' && this.sailDesign.secondaryPattern === 'waves';
+    secretButton.classList.toggle('unlocked', secretUnlocked);
+    secretButton.disabled = !secretUnlocked;
+    secretButton.setAttribute('aria-hidden', String(!secretUnlocked));
   }
 
   private applyShipUpgradeVisual(ship: THREE.Group, level: number): void {
