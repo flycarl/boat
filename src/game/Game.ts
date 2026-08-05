@@ -2170,8 +2170,18 @@ export class Game {
     const visible = projected.z > -1 && projected.z < 1 && Math.abs(projected.x) < 0.92 && Math.abs(projected.y) < 0.86;
     arrow.classList.toggle('visible', !visible);
     if (!visible) {
-      const direction = this.boss.group.position.clone().sub(this.player.position);
-      arrow.style.transform = `translateX(-50%) rotate(${Math.atan2(direction.x, -direction.z)}rad)`;
+      const direction = this.boss.group.position.clone().sub(this.player.position).setY(0).normalize();
+      const anchorWorld = this.player.position.clone().addScaledVector(direction, this.playerShipRadius() + 2.2).setY(0.85);
+      const pointerWorld = anchorWorld.clone().add(direction);
+      const anchorScreen = anchorWorld.project(this.camera);
+      const pointerScreen = pointerWorld.project(this.camera);
+      const left = (anchorScreen.x * 0.5 + 0.5) * window.innerWidth;
+      const top = (-anchorScreen.y * 0.5 + 0.5) * window.innerHeight;
+      const screenDx = pointerScreen.x - anchorScreen.x;
+      const screenDy = -(pointerScreen.y - anchorScreen.y);
+      arrow.style.left = `${left}px`;
+      arrow.style.top = `${top}px`;
+      arrow.style.transform = `translate(-50%, -50%) rotate(${Math.atan2(screenDx, -screenDy)}rad)`;
     }
   }
 

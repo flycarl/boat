@@ -270,8 +270,6 @@ body {
 
 #boss-arrow {
   position: absolute;
-  left: 50%;
-  top: 92px;
   z-index: 8;
   display: none;
   color: #ffb52e;
@@ -290,7 +288,6 @@ body {
 
 @media (max-width: 700px) {
   #boss-hud { top: 8px; width: calc(100vw - 24px); }
-  #boss-arrow { top: 78px; }
 }
 
 #overlay.visible {
