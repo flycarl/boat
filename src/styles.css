@@ -478,6 +478,28 @@ body {
   pointer-events: none;
 }
 
+#kill-feed {
+  position: absolute;
+  top: calc(max(14px, env(safe-area-inset-top)) + 78px);
+  left: max(16px, env(safe-area-inset-left));
+  z-index: 7;
+  display: grid;
+  gap: 7px;
+  width: min(360px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.kill-message {
+  padding: 8px 11px;
+  border-left: 4px solid #ff4040;
+  color: #fff4d6;
+  background: rgba(5, 18, 26, 0.72);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+  font-size: 0.86rem;
+  font-weight: 850;
+  text-shadow: 0 2px 5px rgba(0, 0, 0, 0.75);
+}
+
 .damage-float {
   position: absolute;
   transform: translate(-50%, -50%);

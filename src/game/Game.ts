@@ -26,6 +26,7 @@ type Castaway = { group: THREE.Group; dock: THREE.Vector3; rescued: boolean; cos
 type FloatingText = { element: HTMLElement; position: THREE.Vector3; life: number; maxLife: number; lift: number };
 export type GameOptions = { playerName: string; roomCode: string };
 type RoomMessage = {
+  type: 'state';
   id: string;
   room: string;
   name: string;
@@ -37,6 +38,8 @@ type RoomMessage = {
   maxHp: number;
   flagColor: string;
 };
+type KillMessage = { type: 'kill'; id: string; room: string; killer: string; victim: string };
+type NetworkMessage = RoomMessage | KillMessage;
 type RemotePeer = { group: THREE.Group; name: string; hp: number; maxHp: number; hullLevel: number; lastSeen: number };
 
 export class Game {
@@ -68,10 +71,12 @@ export class Game {
   private readonly dockMarker: THREE.Mesh;
   private readonly nameplates = this.getElement('#nameplates');
   private readonly floatingTextsLayer = this.getElement('#floating-texts');
+  private readonly killFeed = this.getElement('#kill-feed');
   private readonly mapEnemies = this.getElement('#map-enemies');
   private readonly remotePeers = new Map<string, RemotePeer>();
   private readonly clientId = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
   private readonly roomChannel: BroadcastChannel | null;
+  private readonly socket: WebSocket | null;
   private networkTimer = 0;
   private flagColor = '#e54b39';
   private frame = 0;
@@ -111,6 +116,7 @@ export class Game {
     this.renderer = createRenderer(canvas);
     this.roomChannel = 'BroadcastChannel' in window ? new BroadcastChannel(`boat-room-${options.roomCode}`) : null;
     this.roomChannel?.addEventListener('message', this.onRoomMessage);
+    this.socket = this.createSocket();
     this.renderer.toneMappingExposure = this.tuning.exposure;
     this.input = new InputController(this.getElement('#touch-stick'), this.getElement('#touch-knob'), this.getElement('#dash-button'));
     this.debugTools = new DebugTools(this.tuning, () => resizeRenderer(this.renderer, this.camera, this.tuning.maxDpr));
@@ -142,6 +148,7 @@ export class Game {
     window.removeEventListener('keydown', this.onKeyDown);
     this.roomChannel?.removeEventListener('message', this.onRoomMessage);
     this.roomChannel?.close();
+    this.socket?.close();
     this.input.dispose();
     this.audio.dispose();
     this.debugTools.dispose();
@@ -173,9 +180,30 @@ export class Game {
     for (const ship of [this.player, ...this.allies.map((ally) => ally.group)]) this.paintFlag(ship, this.flagColor);
   };
 
-  private readonly onRoomMessage = (event: MessageEvent<RoomMessage>) => {
-    const data = event.data;
+  private readonly onRoomMessage = (event: MessageEvent<NetworkMessage>) => {
+    this.handleNetworkMessage(event.data);
+  };
+
+  private createSocket(): WebSocket | null {
+    if (!('WebSocket' in window) || location.protocol === 'file:') return null;
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const socket = new WebSocket(`${protocol}//${location.host}/ws`);
+    socket.addEventListener('message', (event) => {
+      try {
+        this.handleNetworkMessage(JSON.parse(String(event.data)) as NetworkMessage);
+      } catch {
+        // Ignore malformed packets from stale clients.
+      }
+    });
+    return socket;
+  }
+
+  private handleNetworkMessage(data: NetworkMessage): void {
     if (!data || data.id === this.clientId || data.room !== this.options.roomCode) return;
+    if (data.type === 'kill') {
+      this.showKillFeed(data.killer, data.victim);
+      return;
+    }
     let peer = this.remotePeers.get(data.id);
     if (!peer) {
       const group = this.createShip('#7d4d28', '#ded3b5', data.flagColor, 'raft');
@@ -197,7 +225,7 @@ export class Game {
     this.paintFlag(peer.group, data.flagColor);
     peer.group.position.lerp(new THREE.Vector3(data.x, 0, data.z), 0.55);
     peer.group.rotation.y = data.rotation;
-  };
+  }
 
   private update(deltaRaw: number, elapsedRaw: number): void {
     const delta = Math.min(deltaRaw, 0.05);
@@ -234,8 +262,9 @@ export class Game {
 
   private updateRoomSync(delta: number): void {
     this.networkTimer -= delta;
-    if (this.roomChannel && this.networkTimer <= 0) {
-      this.roomChannel.postMessage({
+    if (this.networkTimer <= 0) {
+      this.sendNetworkMessage({
+        type: 'state',
         id: this.clientId,
         room: this.options.roomCode,
         name: this.options.playerName,
@@ -256,6 +285,14 @@ export class Game {
         this.remotePeers.delete(id);
       }
     }
+  }
+
+  private sendNetworkMessage(message: NetworkMessage): void {
+    if (this.socket?.readyState === WebSocket.OPEN) {
+      this.socket.send(JSON.stringify(message));
+      return;
+    }
+    this.roomChannel?.postMessage(message);
   }
 
   private render(): void { this.renderer.render(this.scene, this.camera); }
@@ -397,8 +434,8 @@ export class Game {
           this.spawnDamageText(enemy.group.position, 10, 'enemy');
           this.makeSplash(this.player.position.clone().lerp(enemy.group.position, 0.5), '#ffffff', 0.45);
           this.audio.hit();
-          if (this.hp <= 0) this.gameOver = true;
-          if (enemy.hp <= 0) this.sinkEnemy(enemy);
+          if (this.hp <= 0) this.playerKilledBy(enemy.name);
+          if (enemy.hp <= 0) this.sinkEnemy(enemy, true, this.options.playerName);
         }
       }
     }
@@ -425,8 +462,8 @@ export class Game {
           this.spawnDamageText(a.group.position, 10, 'enemy');
           this.spawnDamageText(b.group.position, 10, 'enemy');
           this.makeSplash(a.group.position.clone().lerp(b.group.position, 0.5), '#ffffff', 0.42);
-          if (a.hp <= 0) this.sinkEnemy(a, false);
-          if (b.hp <= 0 && this.enemies.includes(b)) this.sinkEnemy(b, false);
+          if (a.hp <= 0) this.sinkEnemy(a, false, b.name);
+          if (b.hp <= 0 && this.enemies.includes(b)) this.sinkEnemy(b, false, a.name);
         }
       }
     }
@@ -495,12 +532,12 @@ export class Game {
       ball.life -= delta; ball.mesh.position.addScaledVector(ball.velocity, delta); ball.mesh.position.y = 0.55 + Math.sin((1 - ball.life) * Math.PI) * 0.85;
       if (ball.owner !== 'enemy') {
         const hit = this.enemies.find((enemy) => ball.mesh.position.distanceTo(enemy.group.position) < 1.35 * enemy.group.scale.x);
-        if (hit) { hit.hp -= ball.damage; this.spawnDamageText(hit.group.position, ball.damage, 'enemy'); this.makeSplash(ball.mesh.position, '#f8d66d'); this.removeBall(i); if (hit.hp <= 0) this.sinkEnemy(hit); continue; }
+        if (hit) { hit.hp -= ball.damage; this.spawnDamageText(hit.group.position, ball.damage, 'enemy'); this.makeSplash(ball.mesh.position, '#f8d66d'); this.removeBall(i); if (hit.hp <= 0) this.sinkEnemy(hit, true, this.options.playerName); continue; }
       } else {
         const enemyHit = this.enemies.find((enemy) => enemy.group !== ball.source && ball.mesh.position.distanceTo(enemy.group.position) < 1.35 * enemy.group.scale.x);
-        if (enemyHit) { enemyHit.hp -= ball.damage; this.spawnDamageText(enemyHit.group.position, ball.damage, 'enemy'); this.makeSplash(ball.mesh.position, '#ffdd8a'); this.removeBall(i); if (enemyHit.hp <= 0) this.sinkEnemy(enemyHit, false); continue; }
+        if (enemyHit) { enemyHit.hp -= ball.damage; this.spawnDamageText(enemyHit.group.position, ball.damage, 'enemy'); this.makeSplash(ball.mesh.position, '#ffdd8a'); this.removeBall(i); if (enemyHit.hp <= 0) this.sinkEnemy(enemyHit, false, this.enemyNameForGroup(ball.source)); continue; }
         if (ball.mesh.position.distanceTo(this.player.position) < 1.35 * this.player.scale.x) {
-          this.hp -= ball.damage; this.audio.hit(); this.spawnDamageText(this.player.position, ball.damage, 'player'); this.makeSplash(this.player.position, '#e54b39'); this.removeBall(i); if (this.hp <= 0) this.gameOver = true; continue;
+          this.hp -= ball.damage; this.audio.hit(); this.spawnDamageText(this.player.position, ball.damage, 'player'); this.makeSplash(this.player.position, '#e54b39'); this.removeBall(i); if (this.hp <= 0) this.playerKilledBy(this.enemyNameForGroup(ball.source)); continue;
         }
       }
       if (ball.life <= 0 || Math.abs(ball.mesh.position.x) > SEA.halfWidth + 5 || Math.abs(ball.mesh.position.z) > SEA.halfDepth + 5) this.removeBall(i);
@@ -632,12 +669,37 @@ export class Game {
     });
   }
 
-  private sinkEnemy(enemy: ShipAi, rewardPlayer = true): void {
+  private sinkEnemy(enemy: ShipAi, rewardPlayer = true, killer = this.options.playerName): void {
     this.enemies.splice(this.enemies.indexOf(enemy), 1); this.scene.remove(enemy.group);
     if (rewardPlayer) { this.kills += 1; this.coins += 18 + enemy.rank * 9 + Math.floor(enemy.coins); }
+    this.broadcastKill(killer, enemy.name);
     for (let i = 0; i < 2; i += 1) this.spawnLoot('gold', enemy.group.position);
     if (Math.random() < 0.35) this.spawnLoot('med', enemy.group.position);
     this.makeSplash(enemy.group.position, '#f8d66d', 1.1); this.audio.sink();
+  }
+
+  private enemyNameForGroup(group: THREE.Group): string {
+    return this.enemies.find((enemy) => enemy.group === group)?.name ?? '海盗';
+  }
+
+  private playerKilledBy(killer: string): void {
+    if (this.gameOver) return;
+    this.gameOver = true;
+    this.broadcastKill(killer, this.options.playerName);
+  }
+
+  private broadcastKill(killer: string, victim: string): void {
+    this.showKillFeed(killer, victim);
+    this.sendNetworkMessage({ type: 'kill', id: this.clientId, room: this.options.roomCode, killer, victim });
+  }
+
+  private showKillFeed(killer: string, victim: string): void {
+    const item = document.createElement('div');
+    item.className = 'kill-message';
+    item.textContent = `${killer} 击沉了 ${victim}`;
+    this.killFeed.prepend(item);
+    window.setTimeout(() => item.remove(), 5200);
+    while (this.killFeed.children.length > 5) this.killFeed.lastElementChild?.remove();
   }
 
   private spawnEnemy(): void {

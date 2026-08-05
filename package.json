@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "lan": "npm run build && node server/lan-server.mjs",
     "build": "tsc && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "test": "playwright test",
@@ -20,8 +21,10 @@
     "@types/node": "^25.9.0",
     "@types/pngjs": "^6.0.5",
     "@types/three": "^0.184.1",
+    "@types/ws": "^8.18.1",
     "pngjs": "^7.0.0",
     "typescript": "^6.0.3",
-    "vite": "^8.0.13"
+    "vite": "^8.0.13",
+    "ws": "^8.21.2"
   }
 }
