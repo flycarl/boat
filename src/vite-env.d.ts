@@ -66,6 +66,8 @@ interface Window {
     setFirstEnemyCoins: (value: number) => void;
     sinkFirstEnemy: () => void;
     defeatPlayer: () => void;
+    spawnBoss: () => void;
+    defeatBoss: () => void;
     collectNearestGold: () => void;
   };
 }

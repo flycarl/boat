@@ -20,8 +20,8 @@ const ISLAND_COLLIDERS = [
   { center: new THREE.Vector3(21, 0, -10), radius: 3.0 },
 ];
 
-type Ball = { mesh: THREE.Mesh; velocity: THREE.Vector3; life: number; age: number; launchY: number; owner: 'player' | 'enemy' | 'ally' | 'remote'; damage: number; source: THREE.Group; killerName?: string };
-type Loot = { group: THREE.Group; kind: 'gold' | 'med'; value: number; active: boolean; bob: number };
+type Ball = { mesh: THREE.Mesh; velocity: THREE.Vector3; life: number; age: number; launchY: number; owner: 'player' | 'enemy' | 'ally' | 'remote'; damage: number; source: THREE.Group; killerName?: string; shooterId?: string };
+type Loot = { id: string; group: THREE.Group; kind: 'gold' | 'med'; value: number; active: boolean; bob: number };
 type ShipAi = {
   id: string;
   group: THREE.Group;
@@ -50,6 +50,8 @@ type CoinFlight = {
   startY: number;
   spread: number;
 };
+type BossKind = 'kraken' | 'serpent' | 'crab';
+type SeaBoss = { id: string; kind: BossKind; name: string; group: THREE.Group; hp: number; maxHp: number; velocity: THREE.Vector3; cooldown: number; age: number; damage: Map<string, number> };
 export type GameOptions = { playerName: string; roomCode: string };
 type PrimarySailPattern = 'anchor' | 'skull' | 'sun' | 'compass';
 type SecondarySailPattern = 'waves' | 'stripes' | 'diamonds' | 'stars';
@@ -80,10 +82,13 @@ type RoomMessage = {
 type KillMessage = { type: 'kill'; id: string; room: string; killer: string; victim: string };
 type ProjectileMessage = { type: 'projectile'; id: string; room: string; projectileId: string; shooterName: string; x: number; y?: number; z: number; vx: number; vz: number; damage: number };
 type LootDropMessage = { type: 'loot-drop'; id: string; room: string; dropId: string; x: number; z: number; value: number };
+type LootPickupMessage = { type: 'loot-pickup'; id: string; room: string; dropId: string };
 type PresenceMessage = { type: 'join' | 'leave'; id: string; room: string; name: string };
-type EnemySnapshot = { id: string; name: string; x: number; z: number; y: number; rotation: number; rank: number; hp: number; maxHp: number; coins: number; seed: number };
+type EnemySnapshot = { id: string; name: string; x: number; z: number; y: number; rotation: number; vx: number; vz: number; rank: number; hp: number; maxHp: number; coins: number; seed: number };
 type EnemyStateMessage = { type: 'enemy-state'; id: string; room: string; enemies: EnemySnapshot[] };
-type NetworkMessage = RoomMessage | KillMessage | ProjectileMessage | LootDropMessage | PresenceMessage | EnemyStateMessage;
+type BossStateMessage = { type: 'boss-state'; id: string; room: string; boss: { id: string; kind: BossKind; name: string; x: number; z: number; rotation: number; hp: number; maxHp: number } | null };
+type BossRewardMessage = { type: 'boss-reward'; id: string; room: string; recipientId: string; amount: number };
+type NetworkMessage = RoomMessage | KillMessage | ProjectileMessage | LootDropMessage | LootPickupMessage | PresenceMessage | EnemyStateMessage | BossStateMessage | BossRewardMessage;
 type RemotePeer = {
   group: THREE.Group;
   targetPosition: THREE.Vector3;
@@ -171,6 +176,10 @@ export class Game {
   private sailorRespawnTimer = 0;
   private readonly floatingTexts: FloatingText[] = [];
   private readonly coinFlights: CoinFlight[] = [];
+  private boss: SeaBoss | null = null;
+  private bossSpawnTimer = 45;
+  private bossSequence = 0;
+  private bossSyncTimer = 0;
 
   private playerShipRadius(): number {
     return 1.0 + Math.min(12, this.hullLevel) * 0.16;
@@ -269,6 +278,16 @@ export class Game {
         if (enemy) this.sinkEnemy(enemy, true, this.options.playerName);
       },
       defeatPlayer: () => this.playerKilledBy('Debug'),
+      spawnBoss: () => {
+        if (this.boss) { this.scene.remove(this.boss.group); disposeObject3D(this.boss.group); this.boss = null; }
+        this.spawnBoss();
+      },
+      defeatBoss: () => {
+        if (!this.boss) return;
+        this.boss.damage.set(this.clientId, this.boss.maxHp);
+        this.boss.hp = 0;
+        this.defeatBoss();
+      },
       collectNearestGold: () => {
         if (!this.loot.some((item) => item.active && item.kind === 'gold')) this.spawnLoot('gold', this.player.position);
         const gold = this.loot.find((item) => item.active && item.kind === 'gold');
@@ -347,11 +366,27 @@ export class Game {
       return;
     }
     if (data.type === 'loot-drop') {
-      this.spawnLoot('gold', new THREE.Vector3(data.x, 0, data.z), data.value);
+      this.spawnLoot('gold', new THREE.Vector3(data.x, 0, data.z), data.value, data.dropId);
+      return;
+    }
+    if (data.type === 'loot-pickup') {
+      this.markLootPickedUp(data.dropId);
       return;
     }
     if (data.type === 'enemy-state') {
       if (!this.isEnemyAuthority()) this.applyEnemyState(data.enemies);
+      return;
+    }
+    if (data.type === 'boss-state') {
+      if (!this.isEnemyAuthority()) this.applyBossState(data.boss);
+      return;
+    }
+    if (data.type === 'boss-reward') {
+      if (data.recipientId === this.clientId) {
+        this.coins += data.amount;
+        this.spawnCoinFlight(this.player.position, data.amount);
+        this.showRoomNotice(`海怪奖励 +${data.amount} 金币`, 'join');
+      }
       return;
     }
     if (data.type === 'join') {
@@ -430,6 +465,7 @@ export class Game {
       damage: data.damage,
       source,
       killerName: data.shooterName,
+      shooterId: data.id,
     });
     this.makeMuzzlePuff(mesh.position, '#fff1b5');
   }
@@ -478,6 +514,9 @@ export class Game {
         }
       }
     }
+    if (enemyAuthority) this.updateBoss(delta, elapsedRaw);
+    else this.animateRemoteBoss(delta, elapsedRaw);
+    this.updateBossHud();
     this.updateRoomSync(delta);
     this.updateFloatingTexts(delta);
     this.updateCoinFlights(delta);
@@ -525,7 +564,12 @@ export class Game {
       this.enemySyncTimer -= delta;
       if (this.enemySyncTimer <= 0) {
         this.sendEnemyState();
-        this.enemySyncTimer = 0.08;
+        this.enemySyncTimer = 0.05;
+      }
+      this.bossSyncTimer -= delta;
+      if (this.bossSyncTimer <= 0) {
+        this.sendBossState();
+        this.bossSyncTimer = 0.1;
       }
     }
     const now = performance.now();
@@ -555,6 +599,8 @@ export class Game {
         z: enemy.group.position.z,
         y: enemy.group.position.y,
         rotation: enemy.group.rotation.y,
+        vx: enemy.velocity.x,
+        vz: enemy.velocity.z,
         rank: enemy.rank,
         hp: enemy.hp,
         maxHp: enemy.maxHp,
@@ -564,10 +610,38 @@ export class Game {
     });
   }
 
+  private sendBossState(): void {
+    const boss = this.boss;
+    this.sendNetworkMessage({
+      type: 'boss-state', id: this.clientId, room: this.options.roomCode,
+      boss: boss ? { id: boss.id, kind: boss.kind, name: boss.name, x: boss.group.position.x, z: boss.group.position.z, rotation: boss.group.rotation.y, hp: boss.hp, maxHp: boss.maxHp } : null,
+    });
+  }
+
+  private applyBossState(snapshot: BossStateMessage['boss']): void {
+    if (!snapshot) {
+      if (this.boss) { this.scene.remove(this.boss.group); disposeObject3D(this.boss.group); this.boss = null; }
+      return;
+    }
+    if (!this.boss || this.boss.id !== snapshot.id) {
+      if (this.boss) { this.scene.remove(this.boss.group); disposeObject3D(this.boss.group); }
+      const group = this.createBossModel(snapshot.kind);
+      group.position.set(snapshot.x, 0.25, snapshot.z);
+      this.scene.add(group);
+      this.boss = { id: snapshot.id, kind: snapshot.kind, name: snapshot.name, group, hp: snapshot.hp, maxHp: snapshot.maxHp, velocity: new THREE.Vector3(), cooldown: 1, age: 0, damage: new Map() };
+    }
+    this.boss.hp = snapshot.hp;
+    this.boss.maxHp = snapshot.maxHp;
+    this.boss.group.position.x = THREE.MathUtils.lerp(this.boss.group.position.x, snapshot.x, 0.45);
+    this.boss.group.position.z = THREE.MathUtils.lerp(this.boss.group.position.z, snapshot.z, 0.45);
+    this.boss.group.rotation.y = snapshot.rotation;
+  }
+
   private updateRemoteEnemies(delta: number): void {
-    const positionSmoothing = 1 - Math.exp(-13 * delta);
-    const rotationSmoothing = 1 - Math.exp(-15 * delta);
+    const positionSmoothing = 1 - Math.exp(-8 * delta);
+    const rotationSmoothing = 1 - Math.exp(-16 * delta);
     for (const enemy of this.enemies) {
+      enemy.group.position.addScaledVector(enemy.velocity, delta);
       enemy.group.position.lerp(enemy.targetPosition, positionSmoothing);
       enemy.group.rotation.y = this.lerpAngle(enemy.group.rotation.y, enemy.targetRotation, rotationSmoothing);
     }
@@ -588,7 +662,8 @@ export class Game {
       enemy.maxHp = snapshot.maxHp;
       enemy.coins = snapshot.coins;
       enemy.seed = snapshot.seed;
-      enemy.targetPosition.set(snapshot.x, snapshot.y, snapshot.z);
+      enemy.velocity.set(snapshot.vx, 0, snapshot.vz);
+      enemy.targetPosition.set(snapshot.x + snapshot.vx * 0.1, snapshot.y, snapshot.z + snapshot.vz * 0.1);
       enemy.targetRotation = snapshot.rotation;
       if (enemy.rank !== snapshot.rank) {
         enemy.rank = snapshot.rank;
@@ -615,8 +690,8 @@ export class Game {
     return {
       id: snapshot.id,
       group,
-      velocity: new THREE.Vector3(),
-      targetPosition: new THREE.Vector3(snapshot.x, snapshot.y, snapshot.z),
+      velocity: new THREE.Vector3(snapshot.vx, 0, snapshot.vz),
+      targetPosition: new THREE.Vector3(snapshot.x + snapshot.vx * 0.1, snapshot.y, snapshot.z + snapshot.vz * 0.1),
       targetRotation: snapshot.rotation,
       hp: snapshot.hp,
       maxHp: snapshot.maxHp,
@@ -811,6 +886,124 @@ export class Game {
     return nearest;
   }
 
+  private updateBoss(delta: number, elapsedRaw: number): void {
+    if (!this.boss) {
+      this.bossSpawnTimer -= delta;
+      if (this.bossSpawnTimer <= 0) this.spawnBoss();
+      return;
+    }
+    const boss = this.boss;
+    boss.age += delta;
+    boss.cooldown -= delta;
+    const targets = [
+      ...(this.isNetworkActive() ? [this.player] : []),
+      ...this.enemies.map((enemy) => enemy.group),
+      ...[...this.remotePeers.values()].filter((peer) => peer.group.visible).map((peer) => peer.group),
+    ];
+    let target = targets[0];
+    for (const candidate of targets) if (target && candidate.position.distanceTo(boss.group.position) < target.position.distanceTo(boss.group.position)) target = candidate;
+    if (target) {
+      const offset = target.position.clone().sub(boss.group.position).setY(0);
+      const distance = offset.length();
+      if (distance > 0.01) {
+        boss.velocity.lerp(offset.normalize().multiplyScalar(2.6), 1 - Math.exp(-1.2 * delta));
+        boss.group.rotation.y = Math.atan2(-boss.velocity.x, -boss.velocity.z);
+      }
+      if (distance < 3.8 && boss.cooldown <= 0) {
+        const enemy = this.enemies.find((item) => item.group === target);
+        if (enemy) {
+          enemy.hp -= 24;
+          if (enemy.hp <= 0) this.sinkEnemy(enemy, false, boss.name);
+        }
+        else if (target === this.player && this.isNetworkActive()) this.hitPlayerByBoss(24);
+        this.makeSplash(target.position, '#be55ff', 1.15);
+        boss.cooldown = 1.6;
+      }
+    }
+    boss.group.position.addScaledVector(boss.velocity, delta);
+    this.clampToSea(boss.group.position, 4.5);
+    this.pushPointOffIslands(boss.group.position, 3.2);
+    boss.group.position.y = 0.25 + Math.sin(elapsedRaw * 1.9) * 0.18;
+  }
+
+  private animateRemoteBoss(delta: number, elapsedRaw: number): void {
+    if (!this.boss) return;
+    this.boss.group.position.y = 0.25 + Math.sin(elapsedRaw * 1.9) * 0.18;
+    this.boss.cooldown -= delta;
+    if (this.isNetworkActive() && this.boss.group.position.distanceTo(this.player.position) < 3.8 && this.boss.cooldown <= 0) {
+      this.hitPlayerByBoss(24);
+      this.boss.cooldown = 1.6;
+    }
+  }
+
+  private hitPlayerByBoss(damage: number): void {
+    this.hp -= damage;
+    this.audio.hit();
+    this.spawnDamageText(this.player.position, damage, 'player');
+    if (this.hp <= 0) this.playerKilledBy(this.boss?.name ?? '深海巨兽');
+  }
+
+  private spawnBoss(): void {
+    const kinds: BossKind[] = ['kraken', 'serpent', 'crab'];
+    const kind = kinds[this.bossSequence % kinds.length];
+    this.bossSequence += 1;
+    const names: Record<BossKind, string> = { kraken: '深渊章鱼', serpent: '风暴海蛇', crab: '钢甲巨蟹' };
+    const group = this.createBossModel(kind);
+    group.position.set((this.bossSequence % 2 ? 1 : -1) * (SEA.halfWidth - 7), 0.25, THREE.MathUtils.randFloatSpread(SEA.halfDepth * 1.45));
+    this.scene.add(group);
+    this.boss = { id: `boss-${Date.now()}`, kind, name: names[kind], group, hp: 1800, maxHp: 1800, velocity: new THREE.Vector3(), cooldown: 1.5, age: 0, damage: new Map() };
+    this.showRoomNotice(`${names[kind]} 出现在海域！`, 'leave');
+  }
+
+  private createBossModel(kind: BossKind): THREE.Group {
+    const group = new THREE.Group();
+    const body = new THREE.MeshStandardMaterial({ color: kind === 'kraken' ? '#6d278f' : kind === 'serpent' ? '#167a67' : '#a33a35', roughness: 0.48, metalness: kind === 'crab' ? 0.35 : 0.05 });
+    const eyeMat = new THREE.MeshStandardMaterial({ color: '#ffcf55', emissive: '#a64212', emissiveIntensity: 0.75 });
+    if (kind === 'kraken') {
+      const head = new THREE.Mesh(new THREE.SphereGeometry(1.55, 20, 14), body); head.scale.y = 1.25; head.position.y = 1.1; group.add(head);
+      for (let i = 0; i < 8; i += 1) { const limb = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.32, 3.5, 9), body); const a = i / 8 * Math.PI * 2; limb.position.set(Math.cos(a) * 1.4, 0.15, Math.sin(a) * 1.4); limb.rotation.z = Math.PI / 2.5; limb.rotation.y = -a; group.add(limb); }
+    } else if (kind === 'serpent') {
+      for (let i = 0; i < 7; i += 1) { const segment = new THREE.Mesh(new THREE.SphereGeometry(0.72 - i * 0.045, 14, 10), body); segment.position.set(Math.sin(i * 0.75) * 0.65, 0.55 + i * 0.16, i * 0.62 - 1.8); group.add(segment); }
+    } else {
+      const shell = new THREE.Mesh(new THREE.SphereGeometry(1.65, 18, 10), body); shell.scale.set(1.35, 0.55, 1); shell.position.y = 0.85; group.add(shell);
+      for (const side of [-1, 1]) { const claw = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.55, 1), body); claw.position.set(side * 2, 0.75, -0.35); claw.rotation.y = side * 0.35; group.add(claw); }
+      for (let i = 0; i < 6; i += 1) { const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.2, 1.9, 8), body); leg.position.set((i < 3 ? -1 : 1) * 1.35, 0.25, ((i % 3) - 1) * 0.8); leg.rotation.z = (i < 3 ? -1 : 1) * 1.05; group.add(leg); }
+    }
+    for (const x of [-0.45, 0.45]) { const eye = new THREE.Mesh(new THREE.SphereGeometry(0.16, 10, 8), eyeMat); eye.position.set(x, 1.55, kind === 'serpent' ? -2.4 : -1.25); group.add(eye); }
+    group.scale.setScalar(1.25);
+    group.traverse((node) => { if (node instanceof THREE.Mesh) node.castShadow = true; });
+    return group;
+  }
+
+  private damageBoss(amount: number, contributorId?: string): void {
+    if (!this.boss || !this.isEnemyAuthority()) return;
+    const actual = Math.min(amount, this.boss.hp);
+    this.boss.hp -= actual;
+    if (contributorId) this.boss.damage.set(contributorId, (this.boss.damage.get(contributorId) ?? 0) + actual);
+    if (this.boss.hp <= 0) this.defeatBoss();
+  }
+
+  private defeatBoss(): void {
+    if (!this.boss) return;
+    const boss = this.boss;
+    const entries = [...boss.damage.entries()];
+    const total = entries.reduce((sum, [, damage]) => sum + damage, 0);
+    let paid = 0;
+    entries.forEach(([recipientId, damage], index) => {
+      const amount = index === entries.length - 1 ? 1000 - paid : Math.floor(1000 * damage / Math.max(1, total));
+      paid += amount;
+      if (recipientId === this.clientId) { this.coins += amount; this.spawnCoinFlight(this.player.position, amount); }
+      else this.sendNetworkMessage({ type: 'boss-reward', id: this.clientId, room: this.options.roomCode, recipientId, amount });
+    });
+    this.makeSplash(boss.group.position, '#ffcf55', 2.8);
+    this.scene.remove(boss.group);
+    disposeObject3D(boss.group);
+    this.boss = null;
+    this.bossSpawnTimer = 75;
+    this.showRoomNotice(`${boss.name} 被击败，1000 金币已按伤害分配`, 'join');
+    this.sendBossState();
+  }
+
   private updateShipCollisions(delta: number, includePlayer = true): void {
     const enemyAuthority = this.isEnemyAuthority();
     this.playerCollideCooldown = Math.max(0, this.playerCollideCooldown - delta);
@@ -915,6 +1108,7 @@ export class Game {
   }
 
   private findAiTarget(enemy: ShipAi): THREE.Group {
+    if (this.boss && enemy.seed % 1 < 0.38 && enemy.hp / enemy.maxHp > 0.35) return this.boss.group;
     const playerIsActive = this.isNetworkActive();
     const playerDistance = enemy.group.position.distanceTo(this.player.position);
     const healthyEnough = enemy.hp / enemy.maxHp > 0.42;
@@ -963,6 +1157,22 @@ export class Game {
         this.removeBall(i);
         continue;
       }
+      if (this.boss && this.isEnemyAuthority() && ball.mesh.position.distanceTo(this.boss.group.position) < 3.1) {
+        const contributorId = ball.owner === 'remote' ? ball.shooterId : ball.owner === 'player' ? this.clientId : undefined;
+        this.damageBoss(ball.damage, contributorId);
+        this.spawnDamageText(this.boss.group.position, ball.damage, 'enemy');
+        this.makeSplash(ball.mesh.position, '#d65cff', 0.75);
+        this.removeBall(i);
+        continue;
+      }
+      if (this.boss && ball.mesh.position.distanceTo(this.boss.group.position) < 3.1) {
+        const contributorId = ball.owner === 'remote' ? ball.shooterId : ball.owner === 'player' ? this.clientId : undefined;
+        this.damageBoss(ball.damage, contributorId);
+        this.spawnDamageText(this.boss.group.position, ball.damage, 'enemy');
+        this.makeSplash(ball.mesh.position, '#d65cff', 0.75);
+        this.removeBall(i);
+        continue;
+      }
       if (ball.owner === 'remote') {
         if (this.isEnemyAuthority()) {
           const hit = this.enemies.find((enemy) => ball.mesh.position.distanceTo(enemy.group.position) < 1.35 * enemy.group.scale.x);
@@ -1003,25 +1213,33 @@ export class Game {
         for (const enemy of this.enemies) {
           if (!item.active) break;
           if (item.group.position.distanceTo(enemy.group.position) < 1.3 * enemy.group.scale.x) {
-            item.active = false;
-            item.group.visible = false;
+            this.markLootPickedUp(item.id);
             if (item.kind === 'gold') enemy.coins += item.value;
             else enemy.hp = Math.min(enemy.maxHp, enemy.hp + enemy.maxHp * 0.5);
             this.makeSplash(item.group.position, item.kind === 'gold' ? '#f8d66d' : '#4dff88', 0.45);
+            if (item.kind === 'gold') this.sendNetworkMessage({ type: 'loot-pickup', id: this.clientId, room: this.options.roomCode, dropId: item.id });
           }
         }
       }
       if (!item.active) continue;
       if (this.isNetworkActive() && item.group.position.distanceTo(this.player.position) < 1.35) {
-        item.active = false; item.group.visible = false;
+        this.markLootPickedUp(item.id);
         if (item.kind === 'gold') {
           this.spawnCoinFlight(this.player.position, item.value);
           this.audio.pickup(item.value);
+          this.sendNetworkMessage({ type: 'loot-pickup', id: this.clientId, room: this.options.roomCode, dropId: item.id });
         }
         else { this.hp = Math.min(this.maxHp(), this.hp + this.maxHp() * 0.5); this.audio.upgrade(); }
       }
     }
     if (this.isEnemyAuthority() && this.loot.filter((item) => item.active && item.kind === 'med').length < 3) this.spawnLoot('med');
+  }
+
+  private markLootPickedUp(dropId: string): void {
+    const item = this.loot.find((candidate) => candidate.id === dropId);
+    if (!item) return;
+    item.active = false;
+    item.group.visible = false;
   }
 
   private updateCastaways(delta: number): void {
@@ -1205,7 +1423,7 @@ export class Game {
     this.coins = 0;
     values.forEach((value, index) => {
       const dropId = `${this.clientId}-${performance.now()}-${index}`;
-      this.spawnLoot('gold', this.player.position, value);
+      this.spawnLoot('gold', this.player.position, value, dropId);
       this.sendNetworkMessage({
         type: 'loot-drop',
         id: this.clientId,
@@ -1275,7 +1493,8 @@ export class Game {
     });
   }
 
-  private spawnLoot(kind: Loot['kind'], origin?: THREE.Vector3, explicitValue?: number): void {
+  private spawnLoot(kind: Loot['kind'], origin?: THREE.Vector3, explicitValue?: number, explicitId?: string): void {
+    if (explicitId && this.loot.some((item) => item.id === explicitId)) return;
     const group = new THREE.Group();
     group.userData.lootKind = kind;
     if (kind === 'gold') {
@@ -1319,7 +1538,7 @@ export class Game {
     this.clampToSea(group.position, 2);
     this.pushPointOffIslands(group.position, 1.1);
     this.scene.add(group);
-    this.loot.push({ group, kind, value: explicitValue ?? (kind === 'gold' ? 7 + Math.floor(Math.random() * 8) : 22), active: true, bob: Math.random() * 10 });
+    this.loot.push({ id: explicitId ?? `${this.clientId}:loot:${performance.now()}:${Math.random()}`, group, kind, value: explicitValue ?? (kind === 'gold' ? 7 + Math.floor(Math.random() * 8) : 22), active: true, bob: Math.random() * 10 });
   }
 
   private randomOpenWaterPosition(): THREE.Vector3 {
@@ -1925,6 +2144,23 @@ export class Game {
     return new THREE.Line(geo, new THREE.LineBasicMaterial({ color: '#2cff75', transparent: true, opacity: 0.95 }));
   }
 
+  private updateBossHud(): void {
+    const hud = this.getElement('#boss-hud');
+    const arrow = this.getElement('#boss-arrow');
+    hud.classList.toggle('visible', this.boss !== null);
+    if (!this.boss) { arrow.classList.remove('visible'); return; }
+    this.getElement('#boss-name').textContent = this.boss.name;
+    this.getElement('#boss-hp-value').textContent = `${Math.ceil(this.boss.hp)} / ${this.boss.maxHp}`;
+    (this.getElement('#boss-hp-fill') as HTMLElement).style.transform = `scaleX(${Math.max(0, this.boss.hp / this.boss.maxHp)})`;
+    const projected = this.boss.group.position.clone().project(this.camera);
+    const visible = projected.z > -1 && projected.z < 1 && Math.abs(projected.x) < 0.92 && Math.abs(projected.y) < 0.86;
+    arrow.classList.toggle('visible', !visible);
+    if (!visible) {
+      const direction = this.boss.group.position.clone().sub(this.player.position);
+      arrow.style.transform = `translateX(-50%) rotate(${Math.atan2(direction.x, -direction.z)}rad)`;
+    }
+  }
+
   private updateGuidance(): void {
     const canBuy = this.coins >= this.minUpgradeCost();
     this.routeLine.visible = true;
@@ -1945,6 +2181,27 @@ export class Game {
       dot.style.transform = `translate(-50%, -50%) scale(${Math.min(1.8, 0.8 + enemy.rank * 0.12)})`;
       return dot;
     }));
+    const mapBoss = this.getElement('#map-boss');
+    mapBoss.replaceChildren();
+    if (this.boss) {
+      const dot = document.createElement('i');
+      dot.style.left = `${((this.boss.group.position.x / SEA.halfWidth) * 0.5 + 0.5) * 100}%`;
+      dot.style.top = `${((this.boss.group.position.z / SEA.halfDepth) * 0.5 + 0.5) * 100}%`;
+      mapBoss.append(dot);
+    }
+    const players = [
+      { position: this.player.position, coins: this.coins },
+      ...[...this.remotePeers.values()].filter((peer) => peer.group.visible).map((peer) => ({ position: peer.group.position, coins: peer.coins })),
+    ];
+    const richest = players.sort((a, b) => b.coins - a.coins)[0];
+    const richLayer = this.getElement('#map-richest');
+    richLayer.replaceChildren();
+    if (richest) {
+      const dot = document.createElement('i');
+      dot.style.left = `${((richest.position.x / SEA.halfWidth) * 0.5 + 0.5) * 100}%`;
+      dot.style.top = `${((richest.position.z / SEA.halfDepth) * 0.5 + 0.5) * 100}%`;
+      richLayer.append(dot);
+    }
     this.updateLeaderboard();
   }
 
