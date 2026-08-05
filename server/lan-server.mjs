@@ -19,7 +19,10 @@ const mime = {
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-  const requested = normalize(url.pathname === '/' ? '/index.html' : url.pathname);
+  // Production assets are built with the GitHub Pages base path (`/boat/`).
+  // Strip that prefix when serving the same build from the LAN server root.
+  const pathname = url.pathname === '/boat' ? '/' : url.pathname.replace(/^\/boat\//, '/');
+  const requested = normalize(pathname === '/' ? '/index.html' : pathname);
   const filePath = join(root, requested);
   if (!filePath.startsWith(root) || !existsSync(filePath)) {
     res.writeHead(404);
