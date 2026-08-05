@@ -20,7 +20,7 @@ const ISLAND_COLLIDERS = [
   { center: new THREE.Vector3(21, 0, -10), radius: 3.0 },
 ];
 
-type Ball = { mesh: THREE.Mesh; velocity: THREE.Vector3; life: number; owner: 'player' | 'enemy' | 'ally' | 'remote'; damage: number; source: THREE.Group; killerName?: string };
+type Ball = { mesh: THREE.Mesh; velocity: THREE.Vector3; life: number; age: number; launchY: number; owner: 'player' | 'enemy' | 'ally' | 'remote'; damage: number; source: THREE.Group; killerName?: string };
 type Loot = { group: THREE.Group; kind: 'gold' | 'med'; value: number; active: boolean; bob: number };
 type ShipAi = {
   id: string;
@@ -424,6 +424,8 @@ export class Game {
       mesh,
       velocity: new THREE.Vector3(data.vx, 0, data.vz),
       life: 1.55,
+      age: 0,
+      launchY: mesh.position.y,
       owner: 'remote',
       damage: data.damage,
       source,
@@ -935,7 +937,15 @@ export class Game {
   private updateBalls(delta: number): void {
     for (let i = this.balls.length - 1; i >= 0; i -= 1) {
       const ball = this.balls[i];
-      ball.life -= delta; ball.mesh.position.addScaledVector(ball.velocity, delta); ball.mesh.position.y = 0.55 + Math.sin((1 - ball.life) * Math.PI) * 0.85;
+      ball.life -= delta;
+      ball.age += delta;
+      ball.mesh.position.addScaledVector(ball.velocity, delta);
+      ball.mesh.position.y = ball.launchY + Math.sin(Math.min(1, ball.age / 1.55) * Math.PI) * 0.48;
+      if (this.isProjectileOnIsland(ball.mesh.position)) {
+        this.makeSplash(ball.mesh.position, '#d8c29a', 0.55);
+        this.removeBall(i);
+        continue;
+      }
       if (ball.owner === 'remote') {
         if (this.isEnemyAuthority()) {
           const hit = this.enemies.find((enemy) => ball.mesh.position.distanceTo(enemy.group.position) < 1.35 * enemy.group.scale.x);
@@ -1032,7 +1042,7 @@ export class Game {
     start.y += cannonHeight * ship.scale.y;
     const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.22, 18, 12), new THREE.MeshStandardMaterial({ color, roughness: 0.34, metalness: 0.72 }));
     mesh.castShadow = true; mesh.position.copy(start); this.scene.add(mesh);
-    this.balls.push({ mesh, velocity: dir.multiplyScalar(speed), life: 1.55, owner, damage, source: ship });
+    this.balls.push({ mesh, velocity: dir.multiplyScalar(speed), life: 1.55, age: 0, launchY: start.y, owner, damage, source: ship });
     this.makeMuzzlePuff(start, owner === 'enemy' ? '#ff705c' : '#fff1b5');
     if (owner === 'player') {
       this.sendNetworkMessage({
@@ -1312,6 +1322,10 @@ export class Game {
       if (island.dock && point.distanceTo(island.dock) < island.dockRadius) return false;
       return point.distanceTo(island.center) < island.radius + margin;
     });
+  }
+
+  private isProjectileOnIsland(point: THREE.Vector3): boolean {
+    return ISLAND_COLLIDERS.some((island) => point.distanceTo(island.center) < island.radius + 0.12);
   }
 
   private addAlly(): void {
