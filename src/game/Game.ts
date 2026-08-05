@@ -390,8 +390,10 @@ export class Game {
       this.updateLoot(delta, elapsedRaw);
       this.updateCastaways(delta);
       this.updateVfx(delta);
-      this.spawnTimer -= delta;
-      if (this.spawnTimer <= 0 && this.enemies.length < 8 + Math.min(this.wave, 6)) { this.spawnEnemy(); this.spawnTimer = Math.max(1.4, 4.2 - this.wave * 0.24); }
+      if (!this.gameOver) {
+        this.spawnTimer -= delta;
+        if (this.spawnTimer <= 0 && this.enemies.length < 8 + Math.min(this.wave, 6)) { this.spawnEnemy(); this.spawnTimer = Math.max(1.4, 4.2 - this.wave * 0.24); }
+      }
       if (this.kills >= this.wave * 4) this.wave += 1;
     }
     if (!playerActive) {
@@ -401,10 +403,12 @@ export class Game {
       this.updateBalls(delta);
       this.updateLoot(delta, elapsedRaw);
       this.updateVfx(delta);
-      this.spawnTimer -= delta;
-      if (this.spawnTimer <= 0 && this.enemies.length < 8 + Math.min(this.wave, 6)) {
-        this.spawnEnemy();
-        this.spawnTimer = Math.max(1.4, 4.2 - this.wave * 0.24);
+      if (!this.gameOver) {
+        this.spawnTimer -= delta;
+        if (this.spawnTimer <= 0 && this.enemies.length < 8 + Math.min(this.wave, 6)) {
+          this.spawnEnemy();
+          this.spawnTimer = Math.max(1.4, 4.2 - this.wave * 0.24);
+        }
       }
     }
     this.updateRoomSync(delta);
@@ -921,13 +925,41 @@ export class Game {
   }
 
   private sinkEnemy(enemy: ShipAi, rewardPlayer = true, killer = this.options.playerName): void {
-    this.enemies.splice(this.enemies.indexOf(enemy), 1); this.scene.remove(enemy.group);
+    const wreckPosition = enemy.group.position.clone();
     if (rewardPlayer) this.kills += 1;
     this.broadcastKill(killer, enemy.name);
     const goldDrops = 2 + Math.min(4, Math.floor(enemy.rank / 3));
-    for (let i = 0; i < goldDrops; i += 1) this.spawnLoot('gold', enemy.group.position);
-    if (Math.random() < 0.35) this.spawnLoot('med', enemy.group.position);
-    this.makeSplash(enemy.group.position, '#f8d66d', 1.1); this.audio.sink();
+    for (let i = 0; i < goldDrops; i += 1) this.spawnLoot('gold', wreckPosition);
+    if (Math.random() < 0.35) this.spawnLoot('med', wreckPosition);
+    this.makeSplash(wreckPosition, '#f8d66d', 1.1);
+    this.audio.sink();
+    this.respawnEnemyAtLevelOne(enemy);
+  }
+
+  private respawnEnemyAtLevelOne(enemy: ShipAi): void {
+    const angle = Math.random() * Math.PI * 2;
+    enemy.rank = 1;
+    enemy.coins = 0;
+    enemy.maxHp = 67;
+    enemy.hp = enemy.maxHp;
+    enemy.cooldown = 1.2 + Math.random();
+    enemy.collideCooldown = 0.8;
+    enemy.levelTimer = 10 + Math.random() * 8;
+    enemy.velocity.set(0, 0, 0);
+    enemy.group.position.set(
+      Math.cos(angle) * (SEA.halfWidth - 4),
+      0,
+      Math.sin(angle) * (SEA.halfDepth - 4),
+    );
+    enemy.group.rotation.set(0, angle + Math.PI, 0);
+    enemy.group.scale.setScalar(this.shipScaleForLevel(1));
+    this.applyShipUpgradeVisual(enemy.group, 1);
+    this.applySailDesign(enemy.group, {
+      primaryPattern: 'skull',
+      secondaryPattern: 'waves',
+      primaryColor: '#111111',
+      secondaryColor: '#7d4d28',
+    });
   }
 
   private enemyNameForGroup(group: THREE.Group): string {
