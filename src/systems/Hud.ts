@@ -71,14 +71,27 @@ export class Hud {
     if (resume) resume.style.display = state.gameOver ? 'none' : 'inline-block';
   }
 
+  getCoinAnchor(): { x: number; y: number } {
+    const rect = this.coinValue.getBoundingClientRect();
+    return { x: rect.left + rect.width * 0.5, y: rect.top + rect.height * 0.5 };
+  }
+
   flashPickup(): void {
-    this.statusLine.animate(
+    this.coinValue.animate(
       [
-        { transform: 'translateY(0)', borderLeftColor: '#f8d66d' },
-        { transform: 'translateY(-3px)', borderLeftColor: '#40e0c0' },
-        { transform: 'translateY(0)', borderLeftColor: '#f8d66d' },
+        { transform: 'scale(1)', color: '#fff4d6', textShadow: '0 0 0 rgba(255, 222, 80, 0)' },
+        { transform: 'scale(1.42)', color: '#fff38a', textShadow: '0 0 18px rgba(255, 201, 45, 0.95)' },
+        { transform: 'scale(1)', color: '#fff4d6', textShadow: '0 0 0 rgba(255, 222, 80, 0)' },
       ],
-      { duration: 240, easing: 'ease-out' },
+      { duration: 280, easing: 'cubic-bezier(.18,.8,.28,1)' },
+    );
+    this.coinValue.parentElement?.animate(
+      [
+        { filter: 'brightness(1)', borderColor: 'rgba(255, 244, 214, 0.25)' },
+        { filter: 'brightness(1.6)', borderColor: '#f8d66d' },
+        { filter: 'brightness(1)', borderColor: 'rgba(255, 244, 214, 0.25)' },
+      ],
+      { duration: 320, easing: 'ease-out' },
     );
   }
 

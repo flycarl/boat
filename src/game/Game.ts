@@ -22,10 +22,34 @@ const ISLAND_COLLIDERS = [
 
 type Ball = { mesh: THREE.Mesh; velocity: THREE.Vector3; life: number; owner: 'player' | 'enemy' | 'ally' | 'remote'; damage: number; source: THREE.Group; killerName?: string };
 type Loot = { group: THREE.Group; kind: 'gold' | 'med'; value: number; active: boolean; bob: number };
-type ShipAi = { group: THREE.Group; velocity: THREE.Vector3; hp: number; maxHp: number; cooldown: number; collideCooldown: number; seed: number; rank: number; coins: number; levelTimer: number; name: string };
+type ShipAi = {
+  id: string;
+  group: THREE.Group;
+  velocity: THREE.Vector3;
+  targetPosition: THREE.Vector3;
+  targetRotation: number;
+  hp: number;
+  maxHp: number;
+  cooldown: number;
+  collideCooldown: number;
+  seed: number;
+  rank: number;
+  coins: number;
+  levelTimer: number;
+  name: string;
+};
 type Ally = { group: THREE.Group; velocity: THREE.Vector3; cooldown: number; offset: THREE.Vector3 };
 type Castaway = { group: THREE.Group; dock: THREE.Vector3; rescued: boolean; cost: number };
 type FloatingText = { element: HTMLElement; position: THREE.Vector3; life: number; maxLife: number; lift: number };
+type CoinFlight = {
+  element: HTMLElement;
+  value: number;
+  elapsed: number;
+  duration: number;
+  startX: number;
+  startY: number;
+  spread: number;
+};
 export type GameOptions = { playerName: string; roomCode: string };
 type PrimarySailPattern = 'anchor' | 'skull' | 'sun' | 'compass';
 type SecondarySailPattern = 'waves' | 'stripes' | 'diamonds' | 'stars';
@@ -57,7 +81,9 @@ type KillMessage = { type: 'kill'; id: string; room: string; killer: string; vic
 type ProjectileMessage = { type: 'projectile'; id: string; room: string; projectileId: string; shooterName: string; x: number; z: number; vx: number; vz: number; damage: number };
 type LootDropMessage = { type: 'loot-drop'; id: string; room: string; dropId: string; x: number; z: number; value: number };
 type PresenceMessage = { type: 'join' | 'leave'; id: string; room: string; name: string };
-type NetworkMessage = RoomMessage | KillMessage | ProjectileMessage | LootDropMessage | PresenceMessage;
+type EnemySnapshot = { id: string; name: string; x: number; z: number; y: number; rotation: number; rank: number; hp: number; maxHp: number; coins: number; seed: number };
+type EnemyStateMessage = { type: 'enemy-state'; id: string; room: string; enemies: EnemySnapshot[] };
+type NetworkMessage = RoomMessage | KillMessage | ProjectileMessage | LootDropMessage | PresenceMessage | EnemyStateMessage;
 type RemotePeer = {
   group: THREE.Group;
   targetPosition: THREE.Vector3;
@@ -113,10 +139,12 @@ export class Game {
   private readonly mapIslands = this.getElement('#map-islands');
   private readonly app = this.getElement('#app');
   private readonly remotePeers = new Map<string, RemotePeer>();
-  private readonly clientId = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+  private readonly clientId: string = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
   private readonly roomChannel: BroadcastChannel | null;
   private readonly socket: WebSocket | null;
   private networkTimer = 0;
+  private enemySyncTimer = 0;
+  private enemyIdCounter = 0;
   private leavingRoom = false;
   private frame = 0;
   private coins = 0;
@@ -142,6 +170,7 @@ export class Game {
   private playerCollideCooldown = 0;
   private sailorRespawnTimer = 0;
   private readonly floatingTexts: FloatingText[] = [];
+  private readonly coinFlights: CoinFlight[] = [];
 
   private playerShipRadius(): number {
     return 1.0 + Math.min(12, this.hullLevel) * 0.16;
@@ -219,6 +248,27 @@ export class Game {
         this.resizeFleet();
         this.cameraRig.snapTo(this.player.position, this.cameraScaleForLevel(this.hullLevel));
       },
+      setCoins: (value: number) => {
+        this.coins = Math.max(0, Math.floor(value));
+      },
+      setFirstEnemyLevel: (level: number) => {
+        const enemy = this.enemies[0];
+        if (!enemy) return;
+        enemy.rank = Math.max(1, Math.min(12, Math.floor(level)));
+        enemy.maxHp = 45 + enemy.rank * 22;
+        enemy.hp = enemy.maxHp;
+        enemy.group.scale.setScalar(this.shipScaleForLevel(enemy.rank));
+        this.applyShipUpgradeVisual(enemy.group, enemy.rank);
+      },
+      setFirstEnemyCoins: (value: number) => {
+        const enemy = this.enemies[0];
+        if (enemy) enemy.coins = Math.max(0, Math.floor(value));
+      },
+      sinkFirstEnemy: () => {
+        const enemy = this.enemies[0];
+        if (enemy) this.sinkEnemy(enemy, true, this.options.playerName);
+      },
+      defeatPlayer: () => this.playerKilledBy('Debug'),
       collectNearestGold: () => {
         if (!this.loot.some((item) => item.active && item.kind === 'gold')) this.spawnLoot('gold', this.player.position);
         const gold = this.loot.find((item) => item.active && item.kind === 'gold');
@@ -243,6 +293,9 @@ export class Game {
     if (event.code === 'Digit1') this.tryUpgrade('cannon');
     if (event.code === 'Digit2') this.tryUpgrade('hull');
     if (event.code === 'Digit3') this.tryUpgrade('speed');
+    if (event.code === 'KeyG' && new URLSearchParams(window.location.search).has('debug')) {
+      window.__BOAT_DEBUG__?.collectNearestGold();
+    }
   };
 
   private readonly onSailPatternClick = (event: Event) => {
@@ -295,6 +348,10 @@ export class Game {
     }
     if (data.type === 'loot-drop') {
       this.spawnLoot('gold', new THREE.Vector3(data.x, 0, data.z), data.value);
+      return;
+    }
+    if (data.type === 'enemy-state') {
+      if (!this.isEnemyAuthority()) this.applyEnemyState(data.enemies);
       return;
     }
     if (data.type === 'join') {
@@ -377,6 +434,7 @@ export class Game {
 
   private update(deltaRaw: number, elapsedRaw: number): void {
     const delta = Math.min(deltaRaw, 0.05);
+    const enemyAuthority = this.isEnemyAuthority();
     this.frame += 1;
     this.ocean.update(elapsedRaw);
     resizeRenderer(this.renderer, this.camera, this.tuning.maxDpr);
@@ -389,31 +447,38 @@ export class Game {
       if (this.input.consumeReload()) this.startReload();
       this.updatePlayer(delta, elapsedRaw);
       this.updateAllies(delta, elapsedRaw);
-      this.updateEnemies(delta, elapsedRaw);
+      if (enemyAuthority) this.updateEnemies(delta, elapsedRaw);
+      else this.updateRemoteEnemies(delta);
       this.updateShipCollisions(delta);
       this.updateBalls(delta);
       this.updateLoot(delta, elapsedRaw);
       this.updateCastaways(delta);
       this.updateVfx(delta);
-      this.spawnTimer -= delta;
-      if (this.spawnTimer <= 0 && this.enemies.length < 8 + Math.min(this.wave, 6)) { this.spawnEnemy(); this.spawnTimer = Math.max(1.4, 4.2 - this.wave * 0.24); }
+      if (enemyAuthority) {
+        this.spawnTimer -= delta;
+        if (this.spawnTimer <= 0 && this.enemies.length < 8 + Math.min(this.wave, 6)) { this.spawnEnemy(); this.spawnTimer = Math.max(1.4, 4.2 - this.wave * 0.24); }
+      }
       if (this.kills >= this.wave * 4) this.wave += 1;
     }
     if (!playerActive) {
       this.audio.setSailing(0);
-      this.updateEnemies(delta, elapsedRaw);
+      if (enemyAuthority) this.updateEnemies(delta, elapsedRaw);
+      else this.updateRemoteEnemies(delta);
       this.updateShipCollisions(delta, false);
       this.updateBalls(delta);
       this.updateLoot(delta, elapsedRaw);
       this.updateVfx(delta);
-      this.spawnTimer -= delta;
-      if (this.spawnTimer <= 0 && this.enemies.length < 8 + Math.min(this.wave, 6)) {
-        this.spawnEnemy();
-        this.spawnTimer = Math.max(1.4, 4.2 - this.wave * 0.24);
+      if (enemyAuthority) {
+        this.spawnTimer -= delta;
+        if (this.spawnTimer <= 0 && this.enemies.length < 8 + Math.min(this.wave, 6)) {
+          this.spawnEnemy();
+          this.spawnTimer = Math.max(1.4, 4.2 - this.wave * 0.24);
+        }
       }
     }
     this.updateRoomSync(delta);
     this.updateFloatingTexts(delta);
+    this.updateCoinFlights(delta);
     this.updateGuidance();
     this.updateNameplates();
     this.nameplates.classList.toggle('hidden', this.paused || this.gameOver || this.upgradeOpen || this.sailorOpen);
@@ -454,6 +519,13 @@ export class Game {
       } satisfies RoomMessage);
       this.networkTimer = 0.08;
     }
+    if (this.isEnemyAuthority()) {
+      this.enemySyncTimer -= delta;
+      if (this.enemySyncTimer <= 0) {
+        this.sendEnemyState();
+        this.enemySyncTimer = 0.08;
+      }
+    }
     const now = performance.now();
     for (const [id, peer] of this.remotePeers) {
       peer.collideCooldown = Math.max(0, peer.collideCooldown - delta);
@@ -467,6 +539,102 @@ export class Game {
       peer.group.position.lerp(peer.targetPosition, positionSmoothing);
       peer.group.rotation.y = this.lerpAngle(peer.group.rotation.y, peer.targetRotation, rotationSmoothing);
     }
+  }
+
+  private sendEnemyState(): void {
+    this.sendNetworkMessage({
+      type: 'enemy-state',
+      id: this.clientId,
+      room: this.options.roomCode,
+      enemies: this.enemies.map((enemy) => ({
+        id: enemy.id,
+        name: enemy.name,
+        x: enemy.group.position.x,
+        z: enemy.group.position.z,
+        y: enemy.group.position.y,
+        rotation: enemy.group.rotation.y,
+        rank: enemy.rank,
+        hp: enemy.hp,
+        maxHp: enemy.maxHp,
+        coins: enemy.coins,
+        seed: enemy.seed,
+      })),
+    });
+  }
+
+  private updateRemoteEnemies(delta: number): void {
+    const positionSmoothing = 1 - Math.exp(-13 * delta);
+    const rotationSmoothing = 1 - Math.exp(-15 * delta);
+    for (const enemy of this.enemies) {
+      enemy.group.position.lerp(enemy.targetPosition, positionSmoothing);
+      enemy.group.rotation.y = this.lerpAngle(enemy.group.rotation.y, enemy.targetRotation, rotationSmoothing);
+    }
+  }
+
+  private applyEnemyState(snapshots: EnemySnapshot[]): void {
+    const seen = new Set<string>();
+    for (const snapshot of snapshots) {
+      seen.add(snapshot.id);
+      let enemy = this.enemies.find((candidate) => candidate.id === snapshot.id);
+      if (!enemy) {
+        enemy = this.createEnemyFromSnapshot(snapshot);
+        this.scene.add(enemy.group);
+        this.enemies.push(enemy);
+      }
+      enemy.name = snapshot.name;
+      enemy.hp = snapshot.hp;
+      enemy.maxHp = snapshot.maxHp;
+      enemy.coins = snapshot.coins;
+      enemy.seed = snapshot.seed;
+      enemy.targetPosition.set(snapshot.x, snapshot.y, snapshot.z);
+      enemy.targetRotation = snapshot.rotation;
+      if (enemy.rank !== snapshot.rank) {
+        enemy.rank = snapshot.rank;
+        enemy.group.scale.setScalar(this.shipScaleForLevel(snapshot.rank));
+        this.applyShipUpgradeVisual(enemy.group, snapshot.rank);
+        this.applyEnemySailDesign(enemy.group);
+      }
+    }
+    for (let i = this.enemies.length - 1; i >= 0; i -= 1) {
+      const enemy = this.enemies[i];
+      if (seen.has(enemy.id)) continue;
+      this.scene.remove(enemy.group);
+      this.enemies.splice(i, 1);
+    }
+  }
+
+  private createEnemyFromSnapshot(snapshot: EnemySnapshot): ShipAi {
+    const group = this.createShip('#7d4d28', '#ded3b5', '#111111', 'raft');
+    group.position.set(snapshot.x, snapshot.y, snapshot.z);
+    group.rotation.y = snapshot.rotation;
+    group.scale.setScalar(this.shipScaleForLevel(snapshot.rank));
+    this.applyShipUpgradeVisual(group, snapshot.rank);
+    this.applyEnemySailDesign(group);
+    return {
+      id: snapshot.id,
+      group,
+      velocity: new THREE.Vector3(),
+      targetPosition: new THREE.Vector3(snapshot.x, snapshot.y, snapshot.z),
+      targetRotation: snapshot.rotation,
+      hp: snapshot.hp,
+      maxHp: snapshot.maxHp,
+      cooldown: 1.1,
+      collideCooldown: 0,
+      seed: snapshot.seed,
+      rank: snapshot.rank,
+      coins: snapshot.coins,
+      levelTimer: 10,
+      name: snapshot.name,
+    };
+  }
+
+  private applyEnemySailDesign(group: THREE.Group): void {
+    this.applySailDesign(group, {
+      primaryPattern: 'skull',
+      secondaryPattern: 'waves',
+      primaryColor: '#111111',
+      secondaryColor: '#7d4d28',
+    });
   }
 
   private isNetworkActive(): boolean {
@@ -499,10 +667,18 @@ export class Game {
     this.roomChannel?.postMessage(message);
   }
 
+  private isEnemyAuthority(): boolean {
+    let authorityId = this.clientId;
+    for (const id of this.remotePeers.keys()) if (id < authorityId) authorityId = id;
+    return authorityId === this.clientId;
+  }
+
   private render(): void { this.renderer.render(this.scene, this.camera); }
 
   private restart(): void {
-    this.clearDynamic();
+    const preserveAiFleet = this.gameOver && this.enemies.length > 0;
+    if (preserveAiFleet) this.clearDynamicExceptEnemies();
+    else this.clearDynamic();
     this.player.position.set(0, 0, 0);
     this.playerVelocity.set(0, 0, 0);
     this.cannonLevel = 1; this.hullLevel = 1; this.speedLevel = 1;
@@ -513,7 +689,7 @@ export class Game {
     this.resizeFleet();
     this.updateSailEditor();
     for (let i = 0; i < 6; i += 1) this.spawnLoot('med');
-    for (let i = 0; i < 7; i += 1) this.spawnEnemy();
+    if (!preserveAiFleet && this.isEnemyAuthority()) for (let i = 0; i < 7; i += 1) this.spawnEnemy();
     this.createCastaways();
     this.cameraRig.snapTo(this.player.position, this.cameraScaleForLevel(this.hullLevel));
   }
@@ -586,16 +762,19 @@ export class Game {
       enemy.collideCooldown = Math.max(0, enemy.collideCooldown - delta);
       enemy.coins += delta * (1.1 + enemy.rank * 0.22);
       enemy.levelTimer -= delta;
-      if ((enemy.coins >= 22 + enemy.rank * 10 || enemy.levelTimer <= 0) && this.canEnemyUpgrade(enemy)) this.upgradeEnemy(enemy);
+      const upgradeCost = 22 + enemy.rank * 10;
+      const wantsUpgrade = enemy.rank < 12 && (enemy.coins >= upgradeCost || enemy.levelTimer <= 0);
+      if (wantsUpgrade && enemy.coins >= upgradeCost && this.canEnemyUpgrade(enemy)) this.upgradeEnemy(enemy);
       const target = this.findAiTarget(enemy);
       const toTarget = target.position.clone().sub(enemy.group.position);
       const distance = toTarget.length();
       const targetThreat = this.getTargetThreat(target);
-      const wantsHiddenUpgrade = enemy.coins >= 22 + enemy.rank * 10 || enemy.levelTimer <= 0;
-      const shouldFlee = enemy.hp / enemy.maxHp < 0.28 || (targetThreat > enemy.rank + 3 && enemy.rank < 8) || (wantsHiddenUpgrade && !this.canEnemyUpgrade(enemy));
-      const desired = shouldFlee
-        ? enemy.group.position.clone().sub(target.position).setY(0).normalize().multiplyScalar(5.2 + enemy.rank * 0.25)
-        : toTarget.normalize().multiplyScalar(distance > 9 ? 4.1 + enemy.rank * 0.35 : 1.8);
+      const shouldFlee = !wantsUpgrade && (enemy.hp / enemy.maxHp < 0.28 || (targetThreat > enemy.rank + 3 && enemy.rank < 8));
+      const desired = wantsUpgrade
+        ? UPGRADE_DOCK.clone().sub(enemy.group.position).setY(0).normalize().multiplyScalar(4.5 + enemy.rank * 0.12)
+        : shouldFlee
+          ? enemy.group.position.clone().sub(target.position).setY(0).normalize().multiplyScalar(5.2 + enemy.rank * 0.25)
+          : toTarget.normalize().multiplyScalar(distance > 9 ? 4.1 + enemy.rank * 0.35 : 1.8);
       desired.add(this.getSeparationForce(enemy).multiplyScalar(2.6));
       desired.x += Math.sin(elapsedRaw * 0.75 + enemy.seed) * 1.5;
       desired.z += Math.cos(elapsedRaw * 0.65 + enemy.seed) * 1.5;
@@ -608,15 +787,16 @@ export class Game {
       if (enemy.velocity.lengthSq() > 4 && Math.sin(elapsedRaw * 8 + enemy.seed) > 0.82) this.createWake(enemy.group, 0.9 + enemy.rank * 0.08);
       enemy.cooldown -= delta;
       const attackRange = target === this.player ? 22 : 17;
-      if (!shouldFlee && distance < attackRange && enemy.cooldown <= 0) { this.fireAt(enemy.group, target.position, 'enemy', 10 + enemy.rank * 3, 11.5, '#251414'); enemy.cooldown = 2.2 + Math.random() * 0.7; }
+      if (!wantsUpgrade && !shouldFlee && distance < attackRange && enemy.cooldown <= 0) { this.fireAt(enemy.group, target.position, 'enemy', 10 + enemy.rank * 3, 11.5, '#251414'); enemy.cooldown = 2.2 + Math.random() * 0.7; }
     }
   }
 
   private canEnemyUpgrade(enemy: ShipAi): boolean {
-    return enemy.group.position.distanceTo(this.player.position) > 31;
+    return enemy.group.position.distanceTo(UPGRADE_DOCK) < 1.45 + 0.8 * enemy.group.scale.x;
   }
 
   private updateShipCollisions(delta: number, includePlayer = true): void {
+    const enemyAuthority = this.isEnemyAuthority();
     this.playerCollideCooldown = Math.max(0, this.playerCollideCooldown - delta);
     if (includePlayer) for (const enemy of this.enemies) {
       const minDistance = this.playerShipRadius() + 0.75 * enemy.group.scale.x;
@@ -625,21 +805,21 @@ export class Game {
       if (distance > 0.001 && distance < minDistance) {
         const normal = offset.normalize();
         const push = (minDistance - distance) * 0.55 + 0.18;
-        enemy.group.position.addScaledVector(normal, push);
+        if (enemyAuthority) enemy.group.position.addScaledVector(normal, push);
         this.player.position.addScaledVector(normal, -push * 0.65);
-        enemy.velocity.addScaledVector(normal, 4.4);
+        if (enemyAuthority) enemy.velocity.addScaledVector(normal, 4.4);
         this.playerVelocity.addScaledVector(normal, -3.4);
         if (this.playerCollideCooldown <= 0 && enemy.collideCooldown <= 0) {
           this.hp -= 10;
-          enemy.hp -= 10;
+          if (enemyAuthority) enemy.hp -= 10;
           this.playerCollideCooldown = 0.55;
           enemy.collideCooldown = 0.55;
           this.spawnDamageText(this.player.position, 10, 'player');
-          this.spawnDamageText(enemy.group.position, 10, 'enemy');
+          if (enemyAuthority) this.spawnDamageText(enemy.group.position, 10, 'enemy');
           this.makeSplash(this.player.position.clone().lerp(enemy.group.position, 0.5), '#ffffff', 0.45);
           this.audio.hit();
           if (this.hp <= 0) this.playerKilledBy(enemy.name);
-          if (enemy.hp <= 0) this.sinkEnemy(enemy, true, this.options.playerName);
+          if (enemyAuthority && enemy.hp <= 0) this.sinkEnemy(enemy, true, this.options.playerName);
         }
       }
     }
@@ -665,6 +845,7 @@ export class Game {
       }
     }
 
+    if (!enemyAuthority) return;
     for (let i = 0; i < this.enemies.length; i += 1) {
       for (let j = i + 1; j < this.enemies.length; j += 1) {
         const a = this.enemies[i];
@@ -743,13 +924,15 @@ export class Game {
   }
 
   private upgradeEnemy(enemy: ShipAi): void {
+    const upgradeCost = 22 + enemy.rank * 10;
     enemy.rank = Math.min(12, enemy.rank + 1);
-    enemy.coins = 0;
+    enemy.coins = Math.max(0, enemy.coins - upgradeCost);
     enemy.levelTimer = 9 + Math.random() * 9;
     enemy.maxHp += 22;
     enemy.hp = enemy.maxHp;
     enemy.group.scale.setScalar(this.shipScaleForLevel(enemy.rank));
     this.applyShipUpgradeVisual(enemy.group, enemy.rank);
+    this.applyEnemySailDesign(enemy.group);
     this.makeSplash(enemy.group.position, '#7ee9ff', 0.85);
   }
 
@@ -758,6 +941,10 @@ export class Game {
       const ball = this.balls[i];
       ball.life -= delta; ball.mesh.position.addScaledVector(ball.velocity, delta); ball.mesh.position.y = 0.55 + Math.sin((1 - ball.life) * Math.PI) * 0.85;
       if (ball.owner === 'remote') {
+        if (this.isEnemyAuthority()) {
+          const hit = this.enemies.find((enemy) => ball.mesh.position.distanceTo(enemy.group.position) < 1.35 * enemy.group.scale.x);
+          if (hit) { hit.hp -= ball.damage; this.spawnDamageText(hit.group.position, ball.damage, 'enemy'); this.makeSplash(ball.mesh.position, '#f8d66d'); this.removeBall(i); if (hit.hp <= 0) this.sinkEnemy(hit, false, ball.killerName ?? '其他玩家'); continue; }
+        }
         if (this.isNetworkActive() && ball.mesh.position.distanceTo(this.player.position) < 1.35 * this.player.scale.x) {
           this.hp -= ball.damage;
           this.audio.hit();
@@ -768,11 +955,15 @@ export class Game {
           continue;
         }
       } else if (ball.owner !== 'enemy') {
-        const hit = this.enemies.find((enemy) => ball.mesh.position.distanceTo(enemy.group.position) < 1.35 * enemy.group.scale.x);
-        if (hit) { hit.hp -= ball.damage; this.spawnDamageText(hit.group.position, ball.damage, 'enemy'); this.makeSplash(ball.mesh.position, '#f8d66d'); this.removeBall(i); if (hit.hp <= 0) this.sinkEnemy(hit, true, this.options.playerName); continue; }
+        if (this.isEnemyAuthority()) {
+          const hit = this.enemies.find((enemy) => ball.mesh.position.distanceTo(enemy.group.position) < 1.35 * enemy.group.scale.x);
+          if (hit) { hit.hp -= ball.damage; this.spawnDamageText(hit.group.position, ball.damage, 'enemy'); this.makeSplash(ball.mesh.position, '#f8d66d'); this.removeBall(i); if (hit.hp <= 0) this.sinkEnemy(hit, true, this.options.playerName); continue; }
+        }
       } else {
-        const enemyHit = this.enemies.find((enemy) => enemy.group !== ball.source && ball.mesh.position.distanceTo(enemy.group.position) < 1.35 * enemy.group.scale.x);
-        if (enemyHit) { enemyHit.hp -= ball.damage; this.spawnDamageText(enemyHit.group.position, ball.damage, 'enemy'); this.makeSplash(ball.mesh.position, '#ffdd8a'); this.removeBall(i); if (enemyHit.hp <= 0) this.sinkEnemy(enemyHit, false, this.enemyNameForGroup(ball.source)); continue; }
+        if (this.isEnemyAuthority()) {
+          const enemyHit = this.enemies.find((enemy) => enemy.group !== ball.source && ball.mesh.position.distanceTo(enemy.group.position) < 1.35 * enemy.group.scale.x);
+          if (enemyHit) { enemyHit.hp -= ball.damage; this.spawnDamageText(enemyHit.group.position, ball.damage, 'enemy'); this.makeSplash(ball.mesh.position, '#ffdd8a'); this.removeBall(i); if (enemyHit.hp <= 0) this.sinkEnemy(enemyHit, false, this.enemyNameForGroup(ball.source)); continue; }
+        }
         if (this.isNetworkActive() && ball.mesh.position.distanceTo(this.player.position) < 1.35 * this.player.scale.x) {
           this.hp -= ball.damage; this.audio.hit(); this.spawnDamageText(this.player.position, ball.damage, 'player'); this.makeSplash(this.player.position, '#e54b39'); this.removeBall(i); if (this.hp <= 0) this.playerKilledBy(this.enemyNameForGroup(ball.source)); continue;
         }
@@ -785,24 +976,29 @@ export class Game {
     for (const item of this.loot) {
       if (!item.active) continue;
       item.group.rotation.y += delta * 0.65; item.group.position.y = 0.38 + Math.sin(elapsedRaw * 2 + item.bob) * 0.1;
-      for (const enemy of this.enemies) {
-        if (!item.active) break;
-        if (item.group.position.distanceTo(enemy.group.position) < 1.3 * enemy.group.scale.x) {
-          item.active = false;
-          item.group.visible = false;
-          if (item.kind === 'gold') enemy.coins += item.value;
-          else enemy.hp = Math.min(enemy.maxHp, enemy.hp + enemy.maxHp * 0.5);
-          this.makeSplash(item.group.position, item.kind === 'gold' ? '#f8d66d' : '#4dff88', 0.45);
+      if (this.isEnemyAuthority()) {
+        for (const enemy of this.enemies) {
+          if (!item.active) break;
+          if (item.group.position.distanceTo(enemy.group.position) < 1.3 * enemy.group.scale.x) {
+            item.active = false;
+            item.group.visible = false;
+            if (item.kind === 'gold') enemy.coins += item.value;
+            else enemy.hp = Math.min(enemy.maxHp, enemy.hp + enemy.maxHp * 0.5);
+            this.makeSplash(item.group.position, item.kind === 'gold' ? '#f8d66d' : '#4dff88', 0.45);
+          }
         }
       }
       if (!item.active) continue;
       if (this.isNetworkActive() && item.group.position.distanceTo(this.player.position) < 1.35) {
         item.active = false; item.group.visible = false;
-        if (item.kind === 'gold') { this.coins += item.value; this.audio.pickup(item.value); this.hud.flashPickup(); }
+        if (item.kind === 'gold') {
+          this.spawnCoinFlight(this.player.position, item.value);
+          this.audio.pickup(item.value);
+        }
         else { this.hp = Math.min(this.maxHp(), this.hp + this.maxHp() * 0.5); this.audio.upgrade(); }
       }
     }
-    if (this.loot.filter((item) => item.active && item.kind === 'med').length < 3) this.spawnLoot('med');
+    if (this.isEnemyAuthority() && this.loot.filter((item) => item.active && item.kind === 'med').length < 3) this.spawnLoot('med');
   }
 
   private updateCastaways(delta: number): void {
@@ -928,13 +1124,14 @@ export class Game {
   private sinkEnemy(enemy: ShipAi, rewardPlayer = true, killer = this.options.playerName): void {
     const wreckPosition = enemy.group.position.clone();
     const defeatedRank = enemy.rank;
+    const defeatedCoins = Math.max(0, Math.floor(enemy.coins));
     if (rewardPlayer) {
       this.kills += 1;
       this.coins += 10 + defeatedRank * 8;
     }
     this.broadcastKill(killer, enemy.name);
-    const goldDrops = 2 + Math.min(4, Math.floor(enemy.rank / 3));
-    for (let i = 0; i < goldDrops; i += 1) this.spawnLoot('gold', wreckPosition);
+    const dropValues = [Math.ceil(defeatedCoins / 2), Math.floor(defeatedCoins / 2)];
+    for (const value of dropValues) this.spawnLoot('gold', wreckPosition, value);
     if (Math.random() < 0.35) this.spawnLoot('med', wreckPosition);
     this.makeSplash(wreckPosition, '#f8d66d', 1.1);
     this.audio.sink();
@@ -957,14 +1154,11 @@ export class Game {
       Math.sin(angle) * (SEA.halfDepth - 4),
     );
     enemy.group.rotation.set(0, angle + Math.PI, 0);
+    enemy.targetPosition.copy(enemy.group.position);
+    enemy.targetRotation = enemy.group.rotation.y;
     enemy.group.scale.setScalar(this.shipScaleForLevel(1));
     this.applyShipUpgradeVisual(enemy.group, 1);
-    this.applySailDesign(enemy.group, {
-      primaryPattern: 'skull',
-      secondaryPattern: 'waves',
-      primaryColor: '#111111',
-      secondaryColor: '#7d4d28',
-    });
+    this.applyEnemySailDesign(enemy.group);
   }
 
   private enemyNameForGroup(group: THREE.Group): string {
@@ -980,7 +1174,6 @@ export class Game {
 
   private dropPlayerCoins(): void {
     const total = Math.max(0, Math.floor(this.coins));
-    if (total <= 0) return;
     const values = [Math.ceil(total / 2), Math.floor(total / 2)];
     this.coins = 0;
     values.forEach((value, index) => {
@@ -1027,8 +1220,58 @@ export class Game {
     const group = this.createShip('#7d4d28', '#ded3b5', '#111111', 'raft');
     group.position.set(Math.cos(angle) * (SEA.halfWidth - 4), 0, Math.sin(angle) * (SEA.halfDepth - 4)); group.scale.setScalar(this.shipScaleForLevel(rank));
     this.applyShipUpgradeVisual(group, rank);
+    this.applyEnemySailDesign(group);
     const names = ['Black Finn', 'Red Hook', 'Mako', 'Storm Rat', 'One-Eye', 'Cannon Kid', 'Sea Fang', 'Drift Jack', 'Skull Minnow'];
-    this.scene.add(group); this.enemies.push({ group, velocity: new THREE.Vector3(), hp: 45 + rank * 22, maxHp: 45 + rank * 22, cooldown: 0.8 + Math.random() * 1.6, collideCooldown: Math.random() * 0.3, seed: Math.random() * 100, rank, coins: Math.random() * 18, levelTimer: 7 + Math.random() * 8, name: names[Math.floor(Math.random() * names.length)] });
+    this.scene.add(group); this.enemies.push({
+      id: `${this.clientId}:enemy:${this.enemyIdCounter++}`,
+      group,
+      velocity: new THREE.Vector3(),
+      targetPosition: group.position.clone(),
+      targetRotation: group.rotation.y,
+      hp: 45 + rank * 22,
+      maxHp: 45 + rank * 22,
+      cooldown: 0.8 + Math.random() * 1.6,
+      collideCooldown: Math.random() * 0.3,
+      seed: Math.random() * 100,
+      rank,
+      coins: Math.random() * 18,
+      levelTimer: 7 + Math.random() * 8,
+      name: names[Math.floor(Math.random() * names.length)],
+    });
+  }
+
+  private createEnemyFromSnapshot(snapshot: EnemySnapshot): ShipAi {
+    const group = this.createShip('#7d4d28', '#ded3b5', '#111111', 'raft');
+    group.position.set(snapshot.x, snapshot.y, snapshot.z);
+    group.rotation.y = snapshot.rotation;
+    group.scale.setScalar(this.shipScaleForLevel(snapshot.rank));
+    this.applyShipUpgradeVisual(group, snapshot.rank);
+    this.applyEnemySailDesign(group);
+    return {
+      id: snapshot.id,
+      group,
+      velocity: new THREE.Vector3(),
+      targetPosition: group.position.clone(),
+      targetRotation: snapshot.rotation,
+      hp: snapshot.hp,
+      maxHp: snapshot.maxHp,
+      cooldown: 0,
+      collideCooldown: 0,
+      seed: snapshot.seed,
+      rank: snapshot.rank,
+      coins: snapshot.coins,
+      levelTimer: 0,
+      name: snapshot.name,
+    };
+  }
+
+  private applyEnemySailDesign(group: THREE.Group): void {
+    this.applySailDesign(group, {
+      primaryPattern: 'skull',
+      secondaryPattern: 'waves',
+      primaryColor: '#111111',
+      secondaryColor: '#7d4d28',
+    });
   }
 
   private spawnLoot(kind: Loot['kind'], origin?: THREE.Vector3, explicitValue?: number): void {
@@ -1862,6 +2105,78 @@ export class Game {
     }
   }
 
+  private spawnCoinFlight(position: THREE.Vector3, value: number): void {
+    const projected = position.clone().add(new THREE.Vector3(0, 1.25, 0)).project(this.camera);
+    const element = document.createElement('div');
+    element.className = 'coin-flight';
+    element.setAttribute('aria-hidden', 'true');
+    element.dataset.value = String(value);
+    const coin = document.createElement('i');
+    coin.textContent = '$';
+    const label = document.createElement('b');
+    label.textContent = `+${value}`;
+    element.append(coin, label);
+    this.floatingTextsLayer.appendChild(element);
+
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const startX = THREE.MathUtils.clamp((projected.x * 0.5 + 0.5) * window.innerWidth, 22, window.innerWidth - 22);
+    const startY = THREE.MathUtils.clamp((-projected.y * 0.5 + 0.5) * window.innerHeight, 22, window.innerHeight - 22);
+    const spreadIndex = (this.coinFlights.length % 5) - 2;
+    this.coinFlights.push({
+      element,
+      value,
+      elapsed: 0,
+      duration: reducedMotion ? 0.18 : 0.72 + Math.min(4, this.coinFlights.length) * 0.045,
+      startX,
+      startY,
+      spread: spreadIndex * 18,
+    });
+  }
+
+  private updateCoinFlights(delta: number): void {
+    for (let i = this.coinFlights.length - 1; i >= 0; i -= 1) {
+      const flight = this.coinFlights[i];
+      flight.elapsed += delta;
+      const progress = Math.min(1, flight.elapsed / flight.duration);
+      const anchor = this.hud.getCoinAnchor();
+      let x = flight.startX;
+      let y = flight.startY;
+      let scale = 0.45;
+
+      if (progress < 0.2) {
+        const burst = progress / 0.2;
+        const pop = Math.sin(burst * Math.PI);
+        x += flight.spread * burst;
+        y -= 18 * burst + 28 * pop;
+        scale = 0.45 + Math.sin(burst * Math.PI * 0.5) * 0.8;
+      } else {
+        const raw = (progress - 0.2) / 0.8;
+        const eased = raw * raw * (3 - 2 * raw);
+        const startX = flight.startX + flight.spread;
+        const startY = flight.startY - 18;
+        const controlX = (startX + anchor.x) * 0.5 + (flight.spread >= 0 ? 1 : -1) * 74;
+        const controlY = Math.min(startY, anchor.y) - Math.min(170, 76 + Math.abs(startY - anchor.y) * 0.24);
+        const inverse = 1 - eased;
+        x = inverse * inverse * startX + 2 * inverse * eased * controlX + eased * eased * anchor.x;
+        y = inverse * inverse * startY + 2 * inverse * eased * controlY + eased * eased * anchor.y;
+        scale = THREE.MathUtils.lerp(1.25, 0.42, eased);
+      }
+
+      const opacity = progress < 0.08 ? progress / 0.08 : progress > 0.9 ? (1 - progress) / 0.1 : 1;
+      flight.element.style.left = `${x}px`;
+      flight.element.style.top = `${y}px`;
+      flight.element.style.opacity = `${Math.max(0, opacity)}`;
+      flight.element.style.transform = `translate(-50%, -50%) scale(${scale}) rotateY(${progress * 900}deg) rotateZ(${progress * 120}deg)`;
+
+      if (progress >= 1) {
+        this.coins += flight.value;
+        this.hud.flashPickup();
+        flight.element.remove();
+        this.coinFlights.splice(i, 1);
+      }
+    }
+  }
+
   private makeSplash(position: THREE.Vector3, color: string, scale = 0.7): void {
     const group = new THREE.Group(); group.userData.life = 0.38; group.userData.maxLife = 0.38; const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85 });
     for (let i = 0; i < 9; i += 1) { const shard = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.35 * scale), mat.clone()); shard.position.copy(position); shard.position.y = 0.42; shard.rotation.y = (i / 9) * Math.PI * 2; shard.position.x += Math.cos(shard.rotation.y) * 0.32 * scale; shard.position.z += Math.sin(shard.rotation.y) * 0.32 * scale; group.add(shard); }
@@ -1921,8 +2236,27 @@ export class Game {
     for (const castaway of this.castaways) this.scene.remove(castaway.group);
     for (const effect of this.vfx) this.scene.remove(effect);
     for (const text of this.floatingTexts) text.element.remove();
+    for (const flight of this.coinFlights) flight.element.remove();
     this.balls.length = 0; this.enemies.length = 0; this.loot.length = 0; this.allies.length = 0; this.castaways.length = 0; this.vfx.length = 0;
     this.floatingTexts.length = 0;
+    this.coinFlights.length = 0;
+  }
+
+  private clearDynamicExceptEnemies(): void {
+    for (const ball of this.balls) this.scene.remove(ball.mesh);
+    for (const item of this.loot) this.scene.remove(item.group);
+    for (const ally of this.allies) this.scene.remove(ally.group);
+    for (const castaway of this.castaways) this.scene.remove(castaway.group);
+    for (const effect of this.vfx) this.scene.remove(effect);
+    for (const text of this.floatingTexts) text.element.remove();
+    for (const flight of this.coinFlights) flight.element.remove();
+    this.balls.length = 0;
+    this.loot.length = 0;
+    this.allies.length = 0;
+    this.castaways.length = 0;
+    this.vfx.length = 0;
+    this.floatingTexts.length = 0;
+    this.coinFlights.length = 0;
   }
 
   private getHudState(): HudState {
@@ -1953,6 +2287,9 @@ export class Game {
         cannonBalls: this.balls.length,
         crates: this.loot.filter((item) => item.active).length,
         goldCoins: this.loot.filter((item) => item.active && item.kind === 'gold').length,
+        goldValues: this.loot.filter((item) => item.active && item.kind === 'gold').map((item) => item.value),
+        enemyLevels: this.enemies.map((enemy) => enemy.rank),
+        coinFlights: this.coinFlights.length,
         vfx: this.vfx.length,
       },
       audio: this.audio.getDiagnostics(),

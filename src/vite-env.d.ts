@@ -13,6 +13,9 @@ interface ThreeGameDiagnostics {
     cannonBalls: number;
     crates: number;
     goldCoins: number;
+    goldValues: number[];
+    enemyLevels: number[];
+    coinFlights: number;
     vfx: number;
   };
   audio: {
@@ -58,6 +61,11 @@ interface Window {
   __THREE_GAME_DIAGNOSTICS__?: ThreeGameDiagnostics;
   __BOAT_DEBUG__?: {
     setHullLevel: (level: number) => void;
+    setCoins: (value: number) => void;
+    setFirstEnemyLevel: (level: number) => void;
+    setFirstEnemyCoins: (value: number) => void;
+    sinkFirstEnemy: () => void;
+    defeatPlayer: () => void;
     collectNearestGold: () => void;
   };
 }
