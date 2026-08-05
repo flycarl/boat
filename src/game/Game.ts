@@ -219,6 +219,7 @@ export class Game {
     this.getElement('#resume-button').addEventListener('click', () => { this.paused = false; });
     this.getElement('#restart-button').addEventListener('click', () => this.restart());
     this.getElement('#quit-room-button').addEventListener('click', () => this.quitRoom());
+    this.getElement('#secret-coin-button').addEventListener('click', () => this.openSecretCoinEntry());
     this.getElement('#close-upgrade').addEventListener('click', () => this.leaveDock());
     this.getElement('#close-sailor').addEventListener('click', () => this.leaveSailorDock());
     this.getElement('#buy-sailor').addEventListener('click', () => this.buySailor());
@@ -729,6 +730,19 @@ export class Game {
       name: this.options.playerName,
     });
     window.setTimeout(() => window.location.reload(), 60);
+  }
+
+  private openSecretCoinEntry(): void {
+    if (!this.paused || this.gameOver) return;
+    const password = window.prompt('请输入密码');
+    if (password === null) return;
+    if (password !== 'qpalzm321') {
+      window.alert('密码错误');
+      return;
+    }
+    this.coins += 1000;
+    this.spawnCoinFlight(this.player.position, 1000);
+    window.alert('已获得 1000 金币');
   }
 
   private lerpAngle(from: number, to: number, alpha: number): number {
