@@ -771,8 +771,12 @@ export class Game {
       const distance = toTarget.length();
       const targetThreat = this.getTargetThreat(target);
       const shouldFlee = enemy.hp / enemy.maxHp < 0.28 || (targetThreat > enemy.rank + 3 && enemy.rank < 8) || (wantsHiddenUpgrade && !this.canEnemyUpgrade(enemy));
+      const nearbyGold = this.findNearbyGold(enemy.group.position, 20);
+      const shouldCollectGold = !shouldFlee && !wantsHiddenUpgrade && distance > 11 && nearbyGold !== null;
       const desired = shouldFlee
         ? enemy.group.position.clone().sub(target.position).setY(0).normalize().multiplyScalar(5.2 + enemy.rank * 0.25)
+        : shouldCollectGold
+          ? nearbyGold.group.position.clone().sub(enemy.group.position).setY(0).normalize().multiplyScalar(4.4 + enemy.rank * 0.28)
         : toTarget.normalize().multiplyScalar(distance > 9 ? 4.1 + enemy.rank * 0.35 : 1.8);
       desired.add(this.getSeparationForce(enemy).multiplyScalar(2.6));
       desired.x += Math.sin(elapsedRaw * 0.75 + enemy.seed) * 1.5;
@@ -792,6 +796,19 @@ export class Game {
 
   private canEnemyUpgrade(enemy: ShipAi): boolean {
     return enemy.group.position.distanceTo(this.player.position) > 31;
+  }
+
+  private findNearbyGold(position: THREE.Vector3, radius: number): Loot | null {
+    let nearest: Loot | null = null;
+    let nearestDistance = radius;
+    for (const item of this.loot) {
+      if (!item.active || item.kind !== 'gold') continue;
+      const distance = item.group.position.distanceTo(position);
+      if (distance >= nearestDistance) continue;
+      nearest = item;
+      nearestDistance = distance;
+    }
+    return nearest;
   }
 
   private updateShipCollisions(delta: number, includePlayer = true): void {
