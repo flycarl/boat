@@ -37,6 +37,8 @@ type ShipAi = {
   coins: number;
   levelTimer: number;
   name: string;
+  active: boolean;
+  respawnTimer: number;
 };
 type Ally = { group: THREE.Group; velocity: THREE.Vector3; cooldown: number; offset: THREE.Vector3 };
 type Castaway = { group: THREE.Group; dock: THREE.Vector3; rescued: boolean; cost: number };
@@ -84,7 +86,7 @@ type ProjectileMessage = { type: 'projectile'; id: string; room: string; project
 type LootDropMessage = { type: 'loot-drop'; id: string; room: string; dropId: string; x: number; z: number; value: number };
 type LootPickupMessage = { type: 'loot-pickup'; id: string; room: string; dropId: string };
 type PresenceMessage = { type: 'join' | 'leave'; id: string; room: string; name: string };
-type EnemySnapshot = { id: string; name: string; x: number; z: number; y: number; rotation: number; vx: number; vz: number; rank: number; hp: number; maxHp: number; coins: number; seed: number };
+type EnemySnapshot = { id: string; name: string; x: number; z: number; y: number; rotation: number; vx: number; vz: number; rank: number; hp: number; maxHp: number; coins: number; seed: number; active?: boolean };
 type EnemyStateMessage = { type: 'enemy-state'; id: string; room: string; enemies: EnemySnapshot[] };
 type BossStateMessage = { type: 'boss-state'; id: string; room: string; boss: { id: string; kind: BossKind; name: string; x: number; z: number; rotation: number; hp: number; maxHp: number } | null };
 type BossRewardMessage = { type: 'boss-reward'; id: string; room: string; recipientId: string; amount: number };
@@ -608,6 +610,7 @@ export class Game {
         maxHp: enemy.maxHp,
         coins: enemy.coins,
         seed: enemy.seed,
+        active: enemy.active,
       })),
     });
   }
@@ -643,6 +646,7 @@ export class Game {
     const positionSmoothing = 1 - Math.exp(-8 * delta);
     const rotationSmoothing = 1 - Math.exp(-16 * delta);
     for (const enemy of this.enemies) {
+      if (!enemy.active) continue;
       enemy.group.position.addScaledVector(enemy.velocity, delta);
       enemy.group.position.lerp(enemy.targetPosition, positionSmoothing);
       enemy.group.rotation.y = this.lerpAngle(enemy.group.rotation.y, enemy.targetRotation, rotationSmoothing);
@@ -664,6 +668,8 @@ export class Game {
       enemy.maxHp = snapshot.maxHp;
       enemy.coins = snapshot.coins;
       enemy.seed = snapshot.seed;
+      enemy.active = snapshot.active !== false;
+      enemy.group.visible = enemy.active;
       enemy.velocity.set(snapshot.vx, 0, snapshot.vz);
       enemy.targetPosition.set(snapshot.x + snapshot.vx * 0.1, snapshot.y, snapshot.z + snapshot.vz * 0.1);
       enemy.targetRotation = snapshot.rotation;
@@ -704,6 +710,8 @@ export class Game {
       coins: snapshot.coins,
       levelTimer: 10,
       name: snapshot.name,
+      active: snapshot.active !== false,
+      respawnTimer: 0,
     };
   }
 
@@ -851,6 +859,11 @@ export class Game {
 
   private updateEnemies(delta: number, elapsedRaw: number): void {
     for (const enemy of this.enemies) {
+      if (!enemy.active) {
+        enemy.respawnTimer -= delta;
+        if (enemy.respawnTimer <= 0) this.respawnEnemyAtLevelOne(enemy);
+        continue;
+      }
       enemy.collideCooldown = Math.max(0, enemy.collideCooldown - delta);
       enemy.coins += delta * (1.1 + enemy.rank * 0.22);
       enemy.levelTimer -= delta;
@@ -912,7 +925,7 @@ export class Game {
     boss.cooldown -= delta;
     const targets = [
       ...(this.isNetworkActive() ? [this.player] : []),
-      ...this.enemies.map((enemy) => enemy.group),
+      ...this.enemies.filter((enemy) => enemy.active).map((enemy) => enemy.group),
       ...[...this.remotePeers.values()].filter((peer) => peer.group.visible).map((peer) => peer.group),
     ];
     let target = targets[0];
@@ -1048,6 +1061,7 @@ export class Game {
     const enemyAuthority = this.isEnemyAuthority();
     this.playerCollideCooldown = Math.max(0, this.playerCollideCooldown - delta);
     if (includePlayer) for (const enemy of this.enemies) {
+      if (!enemy.active) continue;
       const minDistance = this.playerShipRadius() + 0.75 * enemy.group.scale.x;
       const offset = enemy.group.position.clone().sub(this.player.position).setY(0);
       const distance = offset.length();
@@ -1099,6 +1113,7 @@ export class Game {
       for (let j = i + 1; j < this.enemies.length; j += 1) {
         const a = this.enemies[i];
         const b = this.enemies[j];
+        if (!a.active || !b.active) continue;
         const minDistance = 0.82 * (a.group.scale.x + b.group.scale.x);
         const offset = b.group.position.clone().sub(a.group.position).setY(0);
         const distance = offset.length();
@@ -1134,7 +1149,7 @@ export class Game {
   private getSeparationForce(enemy: ShipAi): THREE.Vector3 {
     const force = new THREE.Vector3();
     for (const other of this.enemies) {
-      if (other === enemy) continue;
+      if (other === enemy || !other.active) continue;
       const offset = enemy.group.position.clone().sub(other.group.position).setY(0);
       const distance = offset.length();
       if (distance > 0.001 && distance < 5.2) force.add(offset.normalize().multiplyScalar((5.2 - distance) / 5.2));
@@ -1224,7 +1239,7 @@ export class Game {
       }
       if (ball.owner === 'remote') {
         if (this.isEnemyAuthority()) {
-          const hit = this.enemies.find((enemy) => this.horizontalDistance(ball.mesh.position, enemy.group.position) < 1.35 * enemy.group.scale.x);
+          const hit = this.enemies.find((enemy) => enemy.active && this.horizontalDistance(ball.mesh.position, enemy.group.position) < 1.35 * enemy.group.scale.x);
           if (hit) { hit.hp -= ball.damage; this.spawnDamageText(hit.group.position, ball.damage, 'enemy'); this.makeSplash(ball.mesh.position, '#f8d66d'); this.removeBall(i); if (hit.hp <= 0) this.sinkEnemy(hit, false, ball.killerName ?? '其他玩家'); continue; }
         }
         if (this.isNetworkActive() && this.horizontalDistance(ball.mesh.position, this.player.position) < 1.35 * this.player.scale.x) {
@@ -1238,12 +1253,12 @@ export class Game {
         }
       } else if (ball.owner !== 'enemy') {
         if (this.isEnemyAuthority()) {
-          const hit = this.enemies.find((enemy) => this.horizontalDistance(ball.mesh.position, enemy.group.position) < 1.35 * enemy.group.scale.x);
+          const hit = this.enemies.find((enemy) => enemy.active && this.horizontalDistance(ball.mesh.position, enemy.group.position) < 1.35 * enemy.group.scale.x);
           if (hit) { hit.hp -= ball.damage; this.spawnDamageText(hit.group.position, ball.damage, 'enemy'); this.makeSplash(ball.mesh.position, '#f8d66d'); this.removeBall(i); if (hit.hp <= 0) this.sinkEnemy(hit, true, this.options.playerName); continue; }
         }
       } else {
         if (this.isEnemyAuthority()) {
-          const enemyHit = this.enemies.find((enemy) => enemy.group !== ball.source && this.horizontalDistance(ball.mesh.position, enemy.group.position) < 1.35 * enemy.group.scale.x);
+          const enemyHit = this.enemies.find((enemy) => enemy.active && enemy.group !== ball.source && this.horizontalDistance(ball.mesh.position, enemy.group.position) < 1.35 * enemy.group.scale.x);
           if (enemyHit) { enemyHit.hp -= ball.damage; this.spawnDamageText(enemyHit.group.position, ball.damage, 'enemy'); this.makeSplash(ball.mesh.position, '#ffdd8a'); this.removeBall(i); if (enemyHit.hp <= 0) this.sinkEnemy(enemyHit, false, this.enemyNameForGroup(ball.source)); continue; }
         }
         if (this.isNetworkActive() && this.horizontalDistance(ball.mesh.position, this.player.position) < 1.35 * this.player.scale.x) {
@@ -1261,6 +1276,7 @@ export class Game {
       if (this.isEnemyAuthority()) {
         for (const enemy of this.enemies) {
           if (!item.active) break;
+          if (!enemy.active) continue;
           if (item.group.position.distanceTo(enemy.group.position) < 1.3 * enemy.group.scale.x) {
             this.markLootPickedUp(item.id);
             if (item.kind === 'gold') enemy.coins += item.value;
@@ -1271,7 +1287,8 @@ export class Game {
         }
       }
       if (!item.active) continue;
-      if (this.isNetworkActive() && item.group.position.distanceTo(this.player.position) < 1.35) {
+      const playerPickupRadius = Math.max(1.35, this.playerShipRadius() + 0.8);
+      if (this.isNetworkActive() && item.group.position.distanceTo(this.player.position) < playerPickupRadius) {
         this.markLootPickedUp(item.id);
         if (item.kind === 'gold') {
           this.spawnCoinFlight(this.player.position, item.value);
@@ -1417,6 +1434,7 @@ export class Game {
   }
 
   private sinkEnemy(enemy: ShipAi, rewardPlayer = true, killer = this.options.playerName): void {
+    if (!enemy.active) return;
     const wreckPosition = enemy.group.position.clone();
     const defeatedRank = enemy.rank;
     const defeatedCoins = Math.max(0, Math.floor(enemy.coins));
@@ -1430,7 +1448,11 @@ export class Game {
     if (Math.random() < 0.35) this.spawnLoot('med', wreckPosition);
     this.makeSplash(wreckPosition, '#f8d66d', 1.1);
     this.audio.sink();
-    this.respawnEnemyAtLevelOne(enemy);
+    enemy.active = false;
+    enemy.hp = 0;
+    enemy.velocity.set(0, 0, 0);
+    enemy.respawnTimer = 10;
+    enemy.group.visible = false;
   }
 
   private respawnEnemyAtLevelOne(enemy: ShipAi): void {
@@ -1451,6 +1473,9 @@ export class Game {
     enemy.group.rotation.set(0, angle + Math.PI, 0);
     enemy.targetPosition.copy(enemy.group.position);
     enemy.targetRotation = enemy.group.rotation.y;
+    enemy.active = true;
+    enemy.respawnTimer = 0;
+    enemy.group.visible = true;
     enemy.group.scale.setScalar(this.shipScaleForLevel(1));
     this.applyShipUpgradeVisual(enemy.group, 1);
     this.applyEnemySailDesign(enemy.group);
@@ -1543,6 +1568,8 @@ export class Game {
       coins: Math.random() * 18,
       levelTimer: 7 + Math.random() * 8,
       name: names[Math.floor(Math.random() * names.length)],
+      active: true,
+      respawnTimer: 0,
     });
   }
 
@@ -2250,7 +2277,7 @@ export class Game {
     const ix = ((UPGRADE_ISLAND.x / SEA.halfWidth) * 0.5 + 0.5) * 100; const iy = ((UPGRADE_ISLAND.z / SEA.halfDepth) * 0.5 + 0.5) * 100;
     player.style.left = `${px}%`; player.style.top = `${py}%`; island.style.left = `${ix}%`; island.style.top = `${iy}%`;
     const dx = ix - px; const dy = iy - py; line.style.left = `${px}%`; line.style.top = `${py}%`; line.style.width = `${Math.hypot(dx, dy)}%`; line.style.transform = `rotate(${Math.atan2(dy, dx)}rad)`; line.style.display = 'block'; line.style.opacity = canBuy ? '1' : '0.45';
-    this.mapEnemies.replaceChildren(...this.enemies.map((enemy) => {
+    this.mapEnemies.replaceChildren(...this.enemies.filter((enemy) => enemy.active).map((enemy) => {
       const dot = document.createElement('i');
       dot.className = 'map-enemy';
       dot.style.left = `${((enemy.group.position.x / SEA.halfWidth) * 0.5 + 0.5) * 100}%`;
@@ -2269,7 +2296,7 @@ export class Game {
     const wealthCandidates = [
       { position: this.player.position, coins: this.coins, hullLevel: this.hullLevel, name: this.options.playerName, ai: false },
       ...[...this.remotePeers.values()].filter((peer) => peer.group.visible).map((peer) => ({ position: peer.group.position, coins: peer.coins, hullLevel: peer.hullLevel, name: peer.name, ai: false })),
-      ...this.enemies.map((enemy) => ({ position: enemy.group.position, coins: enemy.coins, hullLevel: enemy.rank, name: enemy.name, ai: true })),
+      ...this.enemies.filter((enemy) => enemy.active).map((enemy) => ({ position: enemy.group.position, coins: enemy.coins, hullLevel: enemy.rank, name: enemy.name, ai: true })),
     ];
     const richest = wealthCandidates.sort((a, b) => b.coins - a.coins || b.hullLevel - a.hullLevel || a.name.localeCompare(b.name))[0];
     const richLayer = this.getElement('#map-richest');
@@ -2398,7 +2425,7 @@ export class Game {
     const entries: Array<{ label: string; position: THREE.Vector3; hp: number; maxHp: number; kind: string }> = [
       { label: `${this.options.playerName} Lv.${this.hullLevel}`, position: this.player.position, hp: this.hp, maxHp: this.maxHp(), kind: 'player' },
       ...[...this.remotePeers.values()].filter((peer) => peer.group.visible).map((peer) => ({ label: `${peer.name} Lv.${peer.hullLevel}`, position: peer.group.position, hp: peer.hp, maxHp: peer.maxHp, kind: 'player' })),
-      ...this.enemies.map((enemy) => ({ label: `${enemy.name} Lv.${enemy.rank}`, position: enemy.group.position, hp: enemy.hp, maxHp: enemy.maxHp, kind: 'enemy' })),
+      ...this.enemies.filter((enemy) => enemy.active).map((enemy) => ({ label: `${enemy.name} Lv.${enemy.rank}`, position: enemy.group.position, hp: enemy.hp, maxHp: enemy.maxHp, kind: 'enemy' })),
       ...this.allies.map((ally, index) => ({ label: `ALLY ${index + 1}`, position: ally.group.position, hp: 1, maxHp: 1, kind: 'ally' })),
     ];
     this.nameplates.replaceChildren(...entries.map((entry) => {
