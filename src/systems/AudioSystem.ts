@@ -65,7 +65,7 @@ export class AudioSystem {
     const moving = this.sailingLevel > 0.035 ? this.sailingLevel : 0;
 
     this.wind.gain.gain.cancelScheduledValues(now);
-    this.wind.gain.gain.setTargetAtTime(moving * 0.034, now, 0.22);
+    this.wind.gain.gain.setTargetAtTime(moving * 0.041, now, 0.22);
     this.wind.filter.frequency.setTargetAtTime(760 + moving * 1450, now, 0.28);
 
     this.water.gain.gain.cancelScheduledValues(now);
