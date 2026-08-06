@@ -899,7 +899,7 @@ export class Game {
     if (!this.paused || this.gameOver) return;
     const password = window.prompt('请输入密码');
     if (password === null) return;
-    if (password !== 'qpalzm321') {
+    if (password !== '321qpalzm') {
       window.alert('密码错误');
       return;
     }
