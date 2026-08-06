@@ -284,7 +284,10 @@ body {
 #map-boss, #map-richest { position: absolute; inset: 0; pointer-events: none; }
 #map-boss i, #map-richest i { position: absolute; width: 10px; height: 10px; border-radius: 50%; transform: translate(-50%, -50%); }
 #map-boss i { background: #d52cff; box-shadow: 0 0 0 3px rgba(213,44,255,.3), 0 0 10px #d52cff; }
-#map-richest i { background: #ffd229; box-shadow: 0 0 0 3px rgba(255,210,41,.3), 0 0 10px #ffd229; }
+#map-richest i { background: #ffd229; }
+#map-richest i.richest-ai { box-shadow: 0 0 0 3px #f04444, 0 0 11px #ffd229; }
+#map-richest i.richest-player { box-shadow: 0 0 0 3px #fff, 0 0 11px #ffd229; }
+#map-peers i { background: #2f8cff; box-shadow: 0 0 0 3px rgba(47,140,255,.26), 0 0 10px #2f8cff; }
 
 @media (max-width: 700px) {
   #boss-hud {

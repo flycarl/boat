@@ -2250,15 +2250,17 @@ export class Game {
       dot.style.top = `${((this.boss.group.position.z / SEA.halfDepth) * 0.5 + 0.5) * 100}%`;
       mapBoss.append(dot);
     }
-    const players = [
-      { position: this.player.position, coins: this.coins },
-      ...[...this.remotePeers.values()].filter((peer) => peer.group.visible).map((peer) => ({ position: peer.group.position, coins: peer.coins })),
+    const wealthCandidates = [
+      { position: this.player.position, coins: this.coins, hullLevel: this.hullLevel, name: this.options.playerName, ai: false },
+      ...[...this.remotePeers.values()].filter((peer) => peer.group.visible).map((peer) => ({ position: peer.group.position, coins: peer.coins, hullLevel: peer.hullLevel, name: peer.name, ai: false })),
+      ...this.enemies.map((enemy) => ({ position: enemy.group.position, coins: enemy.coins, hullLevel: enemy.rank, name: enemy.name, ai: true })),
     ];
-    const richest = players.sort((a, b) => b.coins - a.coins)[0];
+    const richest = wealthCandidates.sort((a, b) => b.coins - a.coins || b.hullLevel - a.hullLevel || a.name.localeCompare(b.name))[0];
     const richLayer = this.getElement('#map-richest');
     richLayer.replaceChildren();
     if (richest) {
       const dot = document.createElement('i');
+      dot.className = richest.ai ? 'richest-ai' : 'richest-player';
       dot.style.left = `${((richest.position.x / SEA.halfWidth) * 0.5 + 0.5) * 100}%`;
       dot.style.top = `${((richest.position.z / SEA.halfDepth) * 0.5 + 0.5) * 100}%`;
       richLayer.append(dot);
