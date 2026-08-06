@@ -1,4 +1,7 @@
 export type HudState = {
+  modeName: string;
+  modeObjective: string;
+  modeGoalReached: boolean;
   hp: number;
   maxHp: number;
   coins: number;
@@ -24,6 +27,8 @@ export type HudState = {
 };
 
 export class Hud {
+  private readonly modeName = this.getElement('#game-mode-name');
+  private readonly modeObjective = this.getElement('#mode-objective');
   private readonly hpFill = this.getElement('#hp-fill');
   private readonly hpValue = this.getElement('#hp-value');
   private readonly coinValue = this.getElement('#coin-value');
@@ -37,6 +42,9 @@ export class Hud {
   private readonly overlay = this.getElement('#overlay');
 
   update(state: HudState): void {
+    this.modeName.textContent = state.modeName;
+    this.modeObjective.textContent = state.modeObjective;
+    this.modeObjective.classList.toggle('complete', state.modeGoalReached);
     const hpRatio = Math.max(0, state.hp / state.maxHp);
     this.hpFill.style.transform = `scaleX(${hpRatio})`;
     this.hpValue.textContent = `${Math.max(0, Math.ceil(state.hp))}/${state.maxHp}`;

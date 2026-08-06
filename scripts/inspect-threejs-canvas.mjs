@@ -97,8 +97,15 @@ async function main() {
   });
   page.on('pageerror', (error) => pageErrors.push(error.message));
 
-  await page.goto(args.url, { waitUntil: 'networkidle' });
+  await page.goto(args.url, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('canvas', { state: 'visible', timeout: 10_000 });
+  const joinPanel = page.locator('#join-panel');
+  if (await joinPanel.isVisible()) {
+    await page.locator('#player-name-input').fill('Canvas QA');
+    await page.locator('#room-code-input').fill('0000');
+    await page.locator('#join-button').click();
+    await page.waitForFunction(() => (window.__THREE_GAME_DIAGNOSTICS__?.frame ?? 0) > 10);
+  }
   await page.waitForTimeout(args.wait);
 
   const result = await sampleCanvas(page);

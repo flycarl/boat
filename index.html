@@ -13,6 +13,30 @@
         <div id="join-card">
           <span class="eyebrow">MULTIPLAYER ROOM</span>
           <h1>加入海战</h1>
+          <div class="home-wallet" aria-label="首页金币">
+            <span>船长金库</span><strong><i>◆</i> <b id="home-coin-value">0</b></strong>
+          </div>
+          <fieldset id="mode-selector">
+            <legend>选择模式</legend>
+            <label class="mode-card mode-brawl">
+              <input type="radio" name="gameMode" value="brawl" checked />
+              <span class="mode-icon" aria-hidden="true">☠</span>
+              <span><strong>自由乱斗</strong><small>全玩法混战 · 争夺金币榜首</small></span>
+              <i>经典</i>
+            </label>
+            <label class="mode-card mode-treasure">
+              <input type="radio" name="gameMode" value="treasure" />
+              <span class="mode-icon" aria-hidden="true">◆</span>
+              <span><strong>淘金撤离</strong><small>高价值金币 · 入库 500 达标</small></span>
+              <i>目标</i>
+            </label>
+            <label class="mode-card mode-hunt">
+              <input type="radio" name="gameMode" value="hunt" />
+              <span class="mode-icon" aria-hidden="true">♆</span>
+              <span><strong>巨兽狩猎</strong><small>合作讨伐 · 击败 3 只海怪</small></span>
+              <i>合作</i>
+            </label>
+          </fieldset>
           <label>
             名字
             <input id="player-name-input" name="playerName" maxlength="14" placeholder="船长名字" autocomplete="nickname" required />
@@ -21,15 +45,28 @@
             四位数房间号
             <input id="room-code-input" name="roomCode" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" placeholder="例如 1234" required />
           </label>
-          <button id="join-button" type="submit">进入房间</button>
-          <p>同一房间号会进入同一场海战。</p>
+          <button id="join-button" type="submit">进入自由乱斗</button>
+          <button id="open-skin-shop" type="button">船坞皮肤 · 12 级共 36 套</button>
+          <p id="room-match-note">相同模式与房间号的船长会进入同一场海战。</p>
         </div>
       </form>
+      <section id="skin-shop-overlay" aria-hidden="true">
+        <div id="skin-shop-card">
+          <header class="skin-shop-heading">
+            <div><span class="eyebrow">CAPTAIN'S SHIPYARD</span><h1>船只皮肤</h1><p>每个等级都有 3 套专属搭配。购买后永久拥有，并为该等级单独装备。</p></div>
+            <div class="skin-shop-wallet"><span>首页金币</span><strong>◆ <b id="shop-coin-value">0</b></strong></div>
+          </header>
+          <nav id="skin-level-tabs" aria-label="船只等级"></nav>
+          <div id="skin-grid"></div>
+          <footer><span>前往战局中的银行：每 25 战局金币兑换 1 首页金币</span><button id="close-skin-shop" type="button">返回首页</button></footer>
+        </div>
+      </section>
       <section id="hud" aria-live="polite">
         <div id="level-banner">Level <span id="level-value">1</span></div>
         <div class="hud-panel captain">
           <span class="eyebrow">BLACKWAKE.IO</span>
-          <strong>海盗船乱斗</strong>
+          <strong id="game-mode-name">自由乱斗</strong>
+          <small id="mode-objective">金币榜首 · 无限混战</small>
           <small id="status-line">侧舷开火，抢金币，升级你的船</small>
         </div>
         <div class="hud-panel health">
@@ -37,20 +74,30 @@
           <div class="meter"><i id="hp-fill"></i></div>
           <strong id="hp-value">100/100</strong>
         </div>
-        <div class="hud-metric"><span>金币</span><strong id="coin-value">0</strong></div>
+        <div class="hud-metric secured-coins"><span>已存金币</span><strong id="coin-value">0</strong></div>
+        <div class="hud-metric cargo-coins"><span>船舱</span><strong id="cargo-value">0</strong></div>
+        <div id="combo-badge" class="hud-metric"><span>连拾</span><strong id="combo-value">x1</strong></div>
+        <div id="wanted-badge" class="hud-metric"><span>通缉</span><strong id="wanted-value">安全</strong></div>
         <div class="hud-metric"><span>炮弹</span><strong id="ammo-value">10/10</strong></div>
         <div class="hud-metric"><span>击沉</span><strong id="kill-value">0</strong></div>
         <div class="hud-metric"><span>波次</span><strong id="wave-value">1</strong></div>
         <div class="hud-metric"><span>时间</span><strong id="timer-value">00:00</strong></div>
         <div id="upgrade-line">1 火炮 · 2 船体 · 3 航速</div>
       </section>
+      <section id="run-status" aria-live="polite">
+        <div id="part-damage"><span>船况</span><strong id="part-damage-value">正常</strong></div>
+        <div id="sea-event-banner"><span id="sea-event-kind">海域平静</span><strong id="sea-event-value">下一事件准备中</strong></div>
+      </section>
       <div id="minimap">
         <span id="map-islands"></span>
         <span id="map-player"></span>
         <span id="map-upgrade"></span>
+        <span id="map-bank"></span>
         <span id="map-line"></span>
         <span id="map-enemies"></span>
+        <span id="map-peers"></span>
         <span id="map-boss"></span>
+        <span id="map-event"></span>
         <span id="map-richest"></span>
       </div>
       <section id="boss-hud" aria-live="polite">
@@ -67,7 +114,7 @@
       <div id="overlay">
         <div id="pause-card">
           <h1>暂停</h1>
-          <div id="pause-room-code">当前房间 <strong>----</strong></div>
+          <div id="pause-room-code"><span id="pause-mode-name">自由乱斗</span> · 房间 <strong>----</strong></div>
           <p>个人观战模式 · 其他玩家会继续战斗 · ESC 继续</p>
           <button id="resume-button" type="button">继续游戏</button>
           <button id="restart-button" type="button">重新开始</button>
@@ -119,7 +166,7 @@
       <div id="upgrade-overlay">
         <div id="upgrade-card">
           <h1>升级港口</h1>
-          <p>停进岛屿凹槽后可以升级。金币不足的项目会变暗。</p>
+          <p>每次靠港会刷新三项强化。只能使用已经存入银行的金币。</p>
           <div class="upgrade-actions">
             <button id="upgrade-cannon" type="button">升级火炮</button>
             <button id="upgrade-hull" type="button">升级船体</button>
@@ -134,6 +181,17 @@
           <p>花 200 金币雇佣一名水手。他会跟着你的船，自动帮你开炮。</p>
           <button id="buy-sailor" type="button">购买水手 $200</button>
           <button id="close-sailor" type="button">离开营地</button>
+        </div>
+      </div>
+      <div id="bank-overlay">
+        <div id="bank-card">
+          <span class="eyebrow">ROYAL TIDE BANK</span>
+          <h1>潮汐银行</h1>
+          <p>把战局金币存入船长金库。每 <strong>25</strong> 战局金币可兑换 <strong>1</strong> 首页金币，用来购买永久皮肤。</p>
+          <div class="bank-rate"><span>本次入库 <b id="bank-cargo-coins">0</b></span><span>已存金币 <b id="bank-battle-coins">0</b></span><i>25 → 1</i><span>首页金币 <b id="bank-home-coins">0</b></span></div>
+          <button id="bank-exchange-one" type="button">兑换 1 首页金币</button>
+          <button id="bank-exchange-all" type="button">全部兑换</button>
+          <button id="close-bank" type="button">离开银行</button>
         </div>
       </div>
       <div id="touch-controls" aria-hidden="true">

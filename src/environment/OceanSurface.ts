@@ -8,10 +8,10 @@ type OceanPalette = {
 };
 
 const DEFAULT_PALETTE: OceanPalette = {
-  deep: new THREE.Color('#05728f'),
-  mid: new THREE.Color('#09a9bd'),
-  shallow: new THREE.Color('#39d6cf'),
-  foam: new THREE.Color('#d9ffff'),
+  deep: new THREE.Color('#075a70'),
+  mid: new THREE.Color('#0f91aa'),
+  shallow: new THREE.Color('#29c9c1'),
+  foam: new THREE.Color('#e9ffff'),
 };
 
 export class OceanSurface extends THREE.Group {
@@ -133,8 +133,11 @@ export class OceanSurface extends THREE.Group {
           float thinCurrent = pow(directional, 18.0) * smoothstep(0.35, 0.85, current);
           float sparkle = smoothstep(0.9, 1.0, noise21(p * 0.46 + drift * 1.8)) * crest;
 
-          color *= 0.88 + current * 0.18 + micro * 0.025;
-          color = mix(color, uFoam, directional * 0.012 + thinCurrent * 0.07 + crest * 0.065 + micro * 0.02 + sparkle * 0.08);
+          float sunPath = pow(max(0.0, 1.0 - abs(p.x * 0.018 + p.y * 0.006 + current * 0.28)), 9.0);
+          float warmGlint = sunPath * (crest * 0.22 + sparkle * 0.34 + thinCurrent * 0.05);
+          color *= 0.86 + current * 0.2 + micro * 0.03;
+          color = mix(color, uFoam, directional * 0.012 + thinCurrent * 0.08 + crest * 0.075 + micro * 0.02 + sparkle * 0.1);
+          color += vec3(1.0, 0.66, 0.28) * warmGlint;
           float vignette = smoothstep(140.0, 250.0, length(p));
           color = mix(color, uDeep * 0.78, vignette);
           gl_FragColor = vec4(color, 0.82);
