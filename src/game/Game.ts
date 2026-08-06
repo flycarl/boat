@@ -1149,6 +1149,9 @@ export class Game {
 
   private findAiTarget(enemy: ShipAi): THREE.Group {
     if (this.boss && enemy.seed % 1 < 0.38 && enemy.hp / enemy.maxHp > 0.35) return this.boss.group;
+    const rival = this.findNearestAiRival(enemy);
+    const prefersInfighting = enemy.seed % 1 < 0.58;
+    if (prefersInfighting && rival) return rival.group;
     const playerIsActive = this.isNetworkActive();
     const playerDistance = enemy.group.position.distanceTo(this.player.position);
     const healthyEnough = enemy.hp / enemy.maxHp > 0.42;
@@ -1171,6 +1174,19 @@ export class Game {
       }
     }
     return best;
+  }
+
+  private findNearestAiRival(enemy: ShipAi): ShipAi | null {
+    let nearest: ShipAi | null = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    for (const candidate of this.enemies) {
+      if (candidate === enemy || candidate.hp <= 0 || !candidate.group.visible) continue;
+      const distance = candidate.group.position.distanceTo(enemy.group.position);
+      if (distance >= nearestDistance) continue;
+      nearest = candidate;
+      nearestDistance = distance;
+    }
+    return nearest;
   }
 
   private upgradeEnemy(enemy: ShipAi): void {
