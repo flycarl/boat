@@ -2106,15 +2106,17 @@ export class Game {
       }
     }
 
-    const cannonCount = Math.min(5, Math.max(1, Math.ceil(levelClamped / 3) + Math.floor(this.cannonLevel / 3)));
+    const playerCannonBonus = ship === this.player ? Math.floor(this.cannonLevel / 3) : 0;
+    const cannonCount = Math.min(5, Math.max(1, Math.ceil(levelClamped / 3) + playerCannonBonus));
+    const cannonSize = levelClamped <= 2 ? 0.68 : levelClamped <= 5 ? 0.84 : 1;
     const cannonY = levelClamped >= 10 ? 1.08 : levelClamped >= 6 ? 1.15 : levelClamped >= 3 ? 0.93 : 0.9;
     const cannonZ = levelClamped >= 10 ? -1.15 : levelClamped >= 6 ? -1.18 : levelClamped >= 3 ? -0.88 : -0.62;
     for (let i = 0; i < cannonCount; i += 1) {
-      const spread = (i - (cannonCount - 1) / 2) * 0.16;
-      const base = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.08, 0.28), deckMat);
+      const spread = (i - (cannonCount - 1) / 2) * 0.16 * cannonSize;
+      const base = new THREE.Mesh(new THREE.BoxGeometry(0.18 * cannonSize, 0.08 * cannonSize, 0.28 * cannonSize), deckMat);
       base.position.set(spread, cannonY - 0.08, cannonZ + 0.08);
       kit.add(base);
-      const cannon = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.095, 0.62, 12), cannonMat);
+      const cannon = new THREE.Mesh(new THREE.CylinderGeometry(0.07 * cannonSize, 0.095 * cannonSize, 0.62 * cannonSize, 12), cannonMat);
       cannon.position.set(spread, cannonY, cannonZ);
       cannon.rotation.x = Math.PI / 2;
       kit.add(cannon);
