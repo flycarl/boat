@@ -3,7 +3,6 @@ import {
   createBankLandmark,
   createShipwrightLandmark,
   createStorybookIsland,
-  createStorybookVesselHull,
   createStylizedCastaway,
   createStylizedCrew,
   createTimberDock,
@@ -29,6 +28,8 @@ const COMBO_WINDOW = 4.25;
 const WANTED_WINDOW = 32;
 const MAX_START_AMMO = 10;
 const ENABLE_SEA_EVENTS = false;
+const USE_STORYBOOK_WORLD_ART = false;
+const ENABLE_DECORATIVE_SKIN_EFFECTS = false;
 const ISLAND_COLLIDERS = [
   { center: UPGRADE_ISLAND, radius: 5.7, dock: UPGRADE_DOCK, dockRadius: 2.35 },
   { center: new THREE.Vector3(20, 0, 12), radius: 4.2 },
@@ -2688,11 +2689,6 @@ export class Game {
     steelMat.userData.skinRole = 'hull' satisfies SkinRole;
     runwayMat.userData.skinRole = 'deck' satisfies SkinRole;
     const levelClamped = Math.max(1, Math.min(12, Math.floor(level)));
-    kit.add(createStorybookVesselHull(levelClamped, {
-      hull: '#5b3823',
-      deck: '#8b582f',
-      accent: '#c89435',
-    }));
     ship.userData.visualLevel = levelClamped;
     const baseMast = ship.getObjectByName('base-mast');
     const baseSail = ship.getObjectByName('custom-sail');
@@ -2916,7 +2912,7 @@ export class Game {
     if (skin) {
       ship.userData.appliedSkinId = skin.id;
       ship.userData.skinTrailColor = skin.effect.trail;
-      ship.add(this.createSkinEffectKit(skin));
+      if (ENABLE_DECORATIVE_SKIN_EFFECTS) ship.add(this.createSkinEffectKit(skin));
     } else {
       delete ship.userData.appliedSkinId;
       delete ship.userData.skinTrailColor;
@@ -3123,9 +3119,7 @@ export class Game {
   }
 
   private createWorldProps(): THREE.Group {
-    return this.createAuthoredWorldProps();
-    /* Legacy kit kept below temporarily as a comparison source while the new
-       authored kit is tuned; the early return guarantees it is never rendered. */
+    if (USE_STORYBOOK_WORLD_ART) return this.createAuthoredWorldProps();
     const props = new THREE.Group(); const sand = new THREE.MeshStandardMaterial({ color: '#ffd36f', roughness: 0.82 }); const palm = new THREE.MeshStandardMaterial({ color: '#31c85d', roughness: 0.68 }); const trunk = new THREE.MeshStandardMaterial({ color: '#a76027', roughness: 0.72 }); const rockMat = new THREE.MeshStandardMaterial({ color: '#d9e1dc', roughness: 0.88 }); const pierMat = new THREE.MeshStandardMaterial({ color: '#9a5b24', roughness: 0.75 });
     for (const [x, z, s] of [[-23, -14, 1.85], [20, 12, 1.4], [-18, 13, 1.1], [21, -10, 1.0], [31, -24, 1.3]] as const) {
       const island = new THREE.Group(); const base = new THREE.Mesh(new THREE.CylinderGeometry(2.6 * s, 3.4 * s, 0.45, 18), sand); base.position.y = 0.05; island.add(base);

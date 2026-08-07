@@ -67,7 +67,7 @@ test('equipped level skin is applied to the player ship', async ({ page }) => {
   await page.locator('#room-code-input').fill('0000');
   await page.locator('#join-button').click();
   await expect.poll(() => page.evaluate(() => window.__THREE_GAME_DIAGNOSTICS__?.player.skinId)).toBe('level-1-abyss');
-  await expect.poll(() => page.evaluate(() => window.__THREE_GAME_DIAGNOSTICS__?.player.skinEffectMeshes ?? 0)).toBeGreaterThan(8);
+  await expect.poll(() => page.evaluate(() => window.__THREE_GAME_DIAGNOSTICS__?.player.sailTextures ?? 0)).toBeGreaterThan(0);
 });
 
 test('upgrading to an unskinned level clears the previous level skin', async ({ page }) => {
