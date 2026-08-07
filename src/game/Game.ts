@@ -74,7 +74,15 @@ type CoinFlight = {
   spread: number;
 };
 type BossKind = 'kraken' | 'serpent' | 'crab';
-type SeaBoss = { id: string; kind: BossKind; name: string; group: THREE.Group; hp: number; maxHp: number; velocity: THREE.Vector3; cooldown: number; age: number; damage: Map<string, number> };
+type BossAbilityKind = 'charge' | 'wave';
+type BossAbilityPhase = 'telegraph' | 'active';
+type BossAbilityState = {
+  kind: BossAbilityKind; phase: BossAbilityPhase; timer: number; duration: number;
+  originX: number; originZ: number; dirX: number; dirZ: number;
+  length: number; width: number; radius: number; hitPlayer: boolean;
+};
+type BossAbilitySnapshot = Omit<BossAbilityState, 'hitPlayer'>;
+type SeaBoss = { id: string; kind: BossKind; name: string; group: THREE.Group; hp: number; maxHp: number; velocity: THREE.Vector3; cooldown: number; skillCooldown: number; age: number; damage: Map<string, number>; ability: BossAbilityState | null };
 type UpgradeKind = 'cannon' | 'hull' | 'speed' | 'magnet' | 'repair' | 'incendiary';
 type SeaEventKind = 'gold-rush' | 'storm' | 'convoy';
 type SeaEvent = { kind: SeaEventKind; title: string; group: THREE.Group; center: THREE.Vector3; duration: number; age: number; pulse: number; spawned: number };
@@ -121,7 +129,7 @@ type LootPickupMessage = { type: 'loot-pickup'; id: string; room: string; dropId
 type PresenceMessage = { type: 'join' | 'leave'; id: string; room: string; name: string };
 type EnemySnapshot = { id: string; name: string; x: number; z: number; y: number; rotation: number; vx: number; vz: number; rank: number; hp: number; maxHp: number; coins: number; seed: number; active?: boolean };
 type EnemyStateMessage = { type: 'enemy-state'; id: string; room: string; enemies: EnemySnapshot[] };
-type BossStateMessage = { type: 'boss-state'; id: string; room: string; bossKills?: number; boss: { id: string; kind: BossKind; name: string; x: number; z: number; rotation: number; hp: number; maxHp: number } | null };
+type BossStateMessage = { type: 'boss-state'; id: string; room: string; bossKills?: number; boss: { id: string; kind: BossKind; name: string; x: number; z: number; rotation: number; hp: number; maxHp: number; ability: BossAbilitySnapshot | null } | null };
 type BossRewardMessage = { type: 'boss-reward'; id: string; room: string; recipientId: string; amount: number };
 type SeaEventStateMessage = { type: 'sea-event-state'; id: string; room: string; event: { kind: SeaEventKind; title: string; x: number; z: number; duration: number; age: number } | null };
 type NetworkMessage = RoomMessage | KillMessage | ProjectileMessage | LootDropMessage | LootPickupMessage | PresenceMessage | EnemyStateMessage | BossStateMessage | BossRewardMessage | SeaEventStateMessage;
@@ -243,6 +251,7 @@ export class Game {
   private bossKills = 0;
   private modeGoalReached = false;
   private boss: SeaBoss | null = null;
+  private bossTelegraph: THREE.Group | null = null;
   private bossSpawnTimer = 45;
   private bossSequence = 0;
   private bossSyncTimer = 0;
@@ -759,7 +768,7 @@ export class Game {
     this.sendNetworkMessage({
       type: 'boss-state', id: this.clientId, room: this.networkRoom,
       bossKills: this.bossKills,
-      boss: boss ? { id: boss.id, kind: boss.kind, name: boss.name, x: boss.group.position.x, z: boss.group.position.z, rotation: boss.group.rotation.y, hp: boss.hp, maxHp: boss.maxHp } : null,
+      boss: boss ? { id: boss.id, kind: boss.kind, name: boss.name, x: boss.group.position.x, z: boss.group.position.z, rotation: boss.group.rotation.y, hp: boss.hp, maxHp: boss.maxHp, ability: boss.ability ? this.bossAbilitySnapshot(boss.ability) : null } : null,
     });
   }
 
@@ -774,6 +783,7 @@ export class Game {
   private applyBossState(snapshot: BossStateMessage['boss']): void {
     if (!snapshot) {
       if (this.boss) { this.scene.remove(this.boss.group); disposeObject3D(this.boss.group); this.boss = null; }
+      this.clearBossTelegraph();
       return;
     }
     if (!this.boss || this.boss.id !== snapshot.id) {
@@ -781,13 +791,30 @@ export class Game {
       const group = this.createBossModel(snapshot.kind);
       group.position.set(snapshot.x, 0.25, snapshot.z);
       this.scene.add(group);
-      this.boss = { id: snapshot.id, kind: snapshot.kind, name: snapshot.name, group, hp: snapshot.hp, maxHp: snapshot.maxHp, velocity: new THREE.Vector3(), cooldown: 1, age: 0, damage: new Map() };
+      this.boss = { id: snapshot.id, kind: snapshot.kind, name: snapshot.name, group, hp: snapshot.hp, maxHp: snapshot.maxHp, velocity: new THREE.Vector3(), cooldown: 1, skillCooldown: 3, age: 0, damage: new Map(), ability: null };
     }
     this.boss.hp = snapshot.hp;
     this.boss.maxHp = snapshot.maxHp;
     this.boss.group.position.x = THREE.MathUtils.lerp(this.boss.group.position.x, snapshot.x, 0.45);
     this.boss.group.position.z = THREE.MathUtils.lerp(this.boss.group.position.z, snapshot.z, 0.45);
     this.boss.group.rotation.y = snapshot.rotation;
+    this.boss.ability = snapshot.ability ? { ...snapshot.ability, hitPlayer: false } : null;
+  }
+
+  private bossAbilitySnapshot(ability: BossAbilityState): BossAbilitySnapshot {
+    return {
+      kind: ability.kind,
+      phase: ability.phase,
+      timer: ability.timer,
+      duration: ability.duration,
+      originX: ability.originX,
+      originZ: ability.originZ,
+      dirX: ability.dirX,
+      dirZ: ability.dirZ,
+      length: ability.length,
+      width: ability.width,
+      radius: ability.radius,
+    };
   }
 
   private updateRemoteEnemies(delta: number): void {
@@ -1115,6 +1142,7 @@ export class Game {
     const boss = this.boss;
     boss.age += delta;
     boss.cooldown -= delta;
+    boss.skillCooldown -= delta;
     const targets = [
       ...(this.isNetworkActive() ? [this.player] : []),
       ...this.enemies.filter((enemy) => enemy.active).map((enemy) => enemy.group),
@@ -1122,14 +1150,19 @@ export class Game {
     ];
     let target = targets[0];
     for (const candidate of targets) if (target && candidate.position.distanceTo(boss.group.position) < target.position.distanceTo(boss.group.position)) target = candidate;
+    if (boss.ability) {
+      this.updateBossAbility(boss, delta);
+    } else if (target && boss.skillCooldown <= 0) {
+      this.startBossAbility(boss, target);
+    }
     if (target) {
       const offset = target.position.clone().sub(boss.group.position).setY(0);
       const distance = offset.length();
-      if (distance > 0.01) {
+      if (!boss.ability && distance > 0.01) {
         boss.velocity.lerp(offset.normalize().multiplyScalar(2.6), 1 - Math.exp(-1.2 * delta));
         boss.group.rotation.y = Math.atan2(-boss.velocity.x, -boss.velocity.z);
       }
-      if (distance < 3.8 && boss.cooldown <= 0) {
+      if (!boss.ability && distance < 3.8 && boss.cooldown <= 0) {
         const enemy = this.enemies.find((item) => item.group === target);
         if (enemy) {
           enemy.hp -= 24;
@@ -1145,6 +1178,99 @@ export class Game {
     this.pushPointOffIslands(boss.group.position, 3.2);
     boss.group.position.y = 0.25 + Math.sin(elapsedRaw * 1.9) * 0.18;
     this.animateBossModel(boss, elapsedRaw);
+    this.updateBossTelegraph(boss.ability);
+  }
+
+  private startBossAbility(boss: SeaBoss, target: THREE.Object3D): void {
+    const direction = target.position.clone().sub(boss.group.position).setY(0);
+    if (direction.lengthSq() < 0.01) direction.set(0, 0, -1).applyQuaternion(boss.group.quaternion);
+    direction.normalize();
+    const useCharge = boss.kind === 'serpent' || (boss.kind !== 'kraken' && Math.random() < 0.56);
+    boss.ability = {
+      kind: useCharge ? 'charge' : 'wave',
+      phase: 'telegraph',
+      timer: 0,
+      duration: useCharge ? 0.95 : 1.05,
+      originX: boss.group.position.x,
+      originZ: boss.group.position.z,
+      dirX: direction.x,
+      dirZ: direction.z,
+      length: useCharge ? 15 : 0,
+      width: useCharge ? 4.2 : 0,
+      radius: useCharge ? 0 : 8.5,
+      hitPlayer: false,
+    };
+    boss.velocity.multiplyScalar(0.15);
+    boss.skillCooldown = 6.5 + Math.random() * 2.2;
+  }
+
+  private updateBossAbility(boss: SeaBoss, delta: number): void {
+    const ability = boss.ability;
+    if (!ability) return;
+    ability.timer += delta;
+    if (ability.phase === 'telegraph' && ability.timer >= ability.duration) {
+      ability.phase = 'active';
+      ability.timer = 0;
+      ability.duration = ability.kind === 'charge' ? 0.58 : 0.34;
+      if (ability.kind === 'wave') this.makeSplash(boss.group.position, '#ff625c', 2.3);
+    }
+    if (ability.phase === 'active') {
+      if (ability.kind === 'charge') {
+        const dir = new THREE.Vector3(ability.dirX, 0, ability.dirZ).normalize();
+        boss.velocity.copy(dir.multiplyScalar(18));
+        boss.group.rotation.y = Math.atan2(-dir.x, -dir.z);
+        this.applyBossAbilityDamage(boss, ability, 32);
+      } else {
+        boss.velocity.multiplyScalar(0.5);
+        this.applyBossAbilityDamage(boss, ability, 28);
+      }
+    } else {
+      boss.velocity.multiplyScalar(0.86);
+    }
+    if (ability.timer >= ability.duration) {
+      if (ability.phase === 'active' && ability.kind === 'charge') this.makeSplash(boss.group.position, '#ff625c', 1.4);
+      boss.ability = null;
+      this.clearBossTelegraph();
+    }
+  }
+
+  private updateRemoteBossAbility(delta: number): void {
+    if (!this.boss?.ability) return;
+    const ability = this.boss.ability;
+    if (ability.phase !== 'active') return;
+    if (ability.kind === 'charge') {
+      const dir = new THREE.Vector3(ability.dirX, 0, ability.dirZ).normalize();
+      this.boss.group.position.addScaledVector(dir, 18 * delta);
+    }
+    this.applyBossAbilityDamage(this.boss, ability, ability.kind === 'charge' ? 32 : 28);
+  }
+
+  private applyBossAbilityDamage(boss: SeaBoss, ability: BossAbilityState, damage: number): void {
+    if (this.isNetworkActive() && !ability.hitPlayer && this.isPointInBossAbility(this.player.position, ability)) {
+      ability.hitPlayer = true;
+      this.hitPlayerByBoss(damage);
+      this.makeSplash(this.player.position, '#ff625c', 1.05);
+    }
+    if (!this.isEnemyAuthority()) return;
+    for (const enemy of this.enemies) {
+      if (!enemy.active || !this.isPointInBossAbility(enemy.group.position, ability)) continue;
+      enemy.hp -= damage;
+      this.spawnDamageText(enemy.group.position, damage, 'enemy');
+      this.makeSplash(enemy.group.position, '#ff625c', 0.9);
+      if (enemy.hp <= 0) this.sinkEnemy(enemy, false, boss.name);
+    }
+  }
+
+  private isPointInBossAbility(point: THREE.Vector3, ability: BossAbilityState): boolean {
+    const dx = point.x - ability.originX;
+    const dz = point.z - ability.originZ;
+    if (ability.kind === 'wave') return Math.hypot(dx, dz) <= ability.radius;
+    const dirLength = Math.hypot(ability.dirX, ability.dirZ) || 1;
+    const dirX = ability.dirX / dirLength;
+    const dirZ = ability.dirZ / dirLength;
+    const forward = dx * dirX + dz * dirZ;
+    const side = Math.abs(dx * -dirZ + dz * dirX);
+    return forward >= -1.6 && forward <= ability.length && side <= ability.width * 0.5;
   }
 
   private animateRemoteBoss(delta: number, elapsedRaw: number): void {
@@ -1152,6 +1278,8 @@ export class Game {
     this.boss.group.position.y = 0.25 + Math.sin(elapsedRaw * 1.9) * 0.18;
     this.animateBossModel(this.boss, elapsedRaw);
     this.boss.cooldown -= delta;
+    this.updateRemoteBossAbility(delta);
+    this.updateBossTelegraph(this.boss.ability);
     if (this.isNetworkActive() && this.boss.group.position.distanceTo(this.player.position) < 3.8 && this.boss.cooldown <= 0) {
       this.hitPlayerByBoss(24);
       this.boss.cooldown = 1.6;
@@ -1174,7 +1302,7 @@ export class Game {
     group.position.set((this.bossSequence % 2 ? 1 : -1) * (SEA.halfWidth - 7), 0.25, THREE.MathUtils.randFloatSpread(SEA.halfDepth * 1.45));
     this.scene.add(group);
     const maxHp = this.options.mode === 'hunt' ? 1400 : this.options.mode === 'treasure' ? 1650 : 1800;
-    this.boss = { id: `boss-${Date.now()}`, kind, name: names[kind], group, hp: maxHp, maxHp, velocity: new THREE.Vector3(), cooldown: 1.5, age: 0, damage: new Map() };
+    this.boss = { id: `boss-${Date.now()}`, kind, name: names[kind], group, hp: maxHp, maxHp, velocity: new THREE.Vector3(), cooldown: 1.5, skillCooldown: 3.4, age: 0, damage: new Map(), ability: null };
     this.showRoomNotice(`${names[kind]} 出现在海域！`, 'leave');
   }
 
@@ -1247,6 +1375,7 @@ export class Game {
     this.boss = null;
     this.bossKills += 1;
     this.bossSpawnTimer = this.modeRules.bossRespawnDelay;
+    this.clearBossTelegraph();
     this.showRoomNotice(`${boss.name} 被击败，1000 金币已按伤害分配`, 'join');
     this.sendBossState();
   }
@@ -3459,6 +3588,67 @@ export class Game {
     }
   }
 
+  private updateBossTelegraph(ability: BossAbilityState | null): void {
+    if (!ability) {
+      this.clearBossTelegraph();
+      return;
+    }
+    if (!this.bossTelegraph || this.bossTelegraph.userData.kind !== ability.kind) {
+      this.clearBossTelegraph();
+      this.bossTelegraph = this.createBossTelegraph(ability);
+      this.scene.add(this.bossTelegraph);
+    }
+    const group = this.bossTelegraph;
+    group.visible = true;
+    group.userData.kind = ability.kind;
+    const pulse = ability.phase === 'telegraph'
+      ? 0.36 + Math.sin((ability.timer / Math.max(0.01, ability.duration)) * Math.PI * 8) * 0.12
+      : 0.62;
+    for (const child of group.children) {
+      if (child instanceof THREE.Mesh && child.material instanceof THREE.Material) child.material.opacity = pulse;
+    }
+    if (ability.kind === 'charge') {
+      const dir = new THREE.Vector3(ability.dirX, 0, ability.dirZ).normalize();
+      group.position.set(ability.originX + dir.x * ability.length * 0.5, 0.13, ability.originZ + dir.z * ability.length * 0.5);
+      group.rotation.y = Math.atan2(dir.x, dir.z);
+      group.scale.set(ability.width, 1, ability.length);
+    } else {
+      group.position.set(ability.originX, 0.13, ability.originZ);
+      group.rotation.y = 0;
+      group.scale.setScalar(ability.radius);
+    }
+  }
+
+  private createBossTelegraph(ability: BossAbilityState): THREE.Group {
+    const group = new THREE.Group();
+    group.userData.kind = ability.kind;
+    const fillMat = new THREE.MeshBasicMaterial({ color: '#ff1f1f', transparent: true, opacity: 0.36, depthWrite: false, side: THREE.DoubleSide });
+    const edgeMat = new THREE.MeshBasicMaterial({ color: '#ffdfdf', transparent: true, opacity: 0.72, depthWrite: false, side: THREE.DoubleSide });
+    if (ability.kind === 'charge') {
+      const fill = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), fillMat);
+      fill.rotation.x = -Math.PI / 2;
+      const edge = new THREE.Mesh(new THREE.PlaneGeometry(1.03, 1.03), edgeMat);
+      edge.rotation.x = -Math.PI / 2;
+      edge.position.y = 0.01;
+      group.add(fill, edge);
+    } else {
+      const fill = new THREE.Mesh(new THREE.CircleGeometry(1, 64), fillMat);
+      fill.rotation.x = -Math.PI / 2;
+      const ring = new THREE.Mesh(new THREE.RingGeometry(0.94, 1, 64), edgeMat);
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.01;
+      group.add(fill, ring);
+    }
+    return group;
+  }
+
+  private clearBossTelegraph(): void {
+    if (!this.bossTelegraph) return;
+    this.scene.remove(this.bossTelegraph);
+    disposeObject3D(this.bossTelegraph);
+    this.bossTelegraph = null;
+  }
+
   private makeSplash(position: THREE.Vector3, color: string, scale = 0.7): void {
     this.splashEvents += 1;
     const group = new THREE.Group();
@@ -3582,6 +3772,7 @@ export class Game {
   private removeBall(index: number): void { const [ball] = this.balls.splice(index, 1); this.scene.remove(ball.mesh); }
 
   private clearDynamic(): void {
+    this.clearBossTelegraph();
     for (const ball of this.balls) this.scene.remove(ball.mesh);
     for (const enemy of this.enemies) this.scene.remove(enemy.group);
     for (const item of this.loot) this.scene.remove(item.group);
@@ -3596,6 +3787,7 @@ export class Game {
   }
 
   private clearDynamicExceptEnemies(): void {
+    this.clearBossTelegraph();
     for (const ball of this.balls) this.scene.remove(ball.mesh);
     for (const item of this.loot) this.scene.remove(item.group);
     for (const ally of this.allies) this.scene.remove(ally.group);
