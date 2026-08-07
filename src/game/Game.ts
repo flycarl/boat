@@ -28,6 +28,7 @@ const BANK_DOCK = new THREE.Vector3(26.8, 0, -24);
 const COMBO_WINDOW = 4.25;
 const WANTED_WINDOW = 32;
 const MAX_START_AMMO = 10;
+const ENABLE_SEA_EVENTS = false;
 const ISLAND_COLLIDERS = [
   { center: UPGRADE_ISLAND, radius: 5.7, dock: UPGRADE_DOCK, dockRadius: 2.35 },
   { center: new THREE.Vector3(20, 0, 12), radius: 4.2 },
@@ -512,7 +513,7 @@ export class Game {
       return;
     }
     if (data.type === 'sea-event-state') {
-      if (!this.isEnemyAuthority()) this.applySeaEventState(data.event);
+      if (ENABLE_SEA_EVENTS && !this.isEnemyAuthority()) this.applySeaEventState(data.event);
       return;
     }
     if (data.type === 'boss-reward') {
@@ -661,7 +662,7 @@ export class Game {
     }
     if (enemyAuthority) this.updateBoss(delta, elapsedRaw);
     else this.animateRemoteBoss(delta, elapsedRaw);
-    this.updateSeaEvent(delta, elapsedRaw, playerActive);
+    if (ENABLE_SEA_EVENTS) this.updateSeaEvent(delta, elapsedRaw, playerActive);
     this.updateSkinEffects(delta, elapsedRaw);
     this.updateBossHud();
     this.updateModeObjective();
@@ -720,7 +721,7 @@ export class Game {
       this.bossSyncTimer -= delta;
       if (this.bossSyncTimer <= 0) {
         this.sendBossState();
-        this.sendSeaEventState();
+        if (ENABLE_SEA_EVENTS) this.sendSeaEventState();
         this.bossSyncTimer = 0.1;
       }
     }
@@ -970,7 +971,7 @@ export class Game {
     this.comboCount = 0; this.comboTimer = 0; this.comboMultiplier = 1; this.wantedLevel = 0; this.wantedTimer = 0;
     this.magnetLevel = 0; this.repairLevel = 0; this.incendiaryLevel = 0;
     this.sailDamage = 0; this.rudderDamage = 0; this.cannonDamage = 0; this.stormDamageTimer = 0;
-    this.endSeaEvent(); this.seaEventTimer = this.modeRules.eventDelay; this.bossSpawnTimer = this.modeRules.bossDelay; this.rollUpgradeDraft();
+    this.endSeaEvent(); this.seaEventTimer = Number.POSITIVE_INFINITY; this.bossSpawnTimer = this.modeRules.bossDelay; this.rollUpgradeDraft();
     this.applySailDesign(this.player, this.sailDesign);
     this.resizeFleet();
     this.updateCargoVisual();

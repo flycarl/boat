@@ -414,6 +414,7 @@ body {
 
 #part-damage,
 #sea-event-banner {
+  display: none !important;
   display: flex;
   align-items: center;
   justify-content: center;
